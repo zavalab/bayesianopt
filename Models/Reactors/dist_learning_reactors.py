@@ -27,7 +27,7 @@ C01=array([5000,0,0]); Tin1=298; V1=1000; TinH2O=298
 k02=array([1000,1250,950]); Ea2=array([32000,35000,40000]); H2=array([-210000,-1700000,-1500000])
 ρ2=950; Cp2=4000;
 # Inlet Specs and Reactor Size
-Tin2f=298; V2=1500; CR02=1000 #C02=array([141,2329,201,1000]); 
+Tin2f=298; V2=1500; CR02=1000 
 
 ## RECYCLE REACTOR NETWORK
 # Physicanl, Kinetic, and Thermodynamic parameters
@@ -79,11 +79,6 @@ class CSTR():
         self.Cf=ones((self.T.shape[0],self.Cinit.shape[0]))
         self.rxn=ones((self.T.shape[0],self.rxn_num))
         self.mH2O=ones((self.T.shape[0]))
-        # self.k={}
-        # for i in range(self.rxn_num):
-        #     self.k['k'+str(i+1)]=k01*exp(-E1/(R*(T)))
-        #     self.k['k'+str(i+1)+'r']=self.k['k'+str(i+1)]/rev_ratio;
-        # self.Cinit=self.Cinit*ones((T.shape[0],self.Cinit.shape[0]))
     def MandE_bal(self,m_bal,q_bal):
         for i in range(self.T.shape[0]):
             self.k={}
@@ -93,10 +88,6 @@ class CSTR():
             def C(C0):
                 self.C=m_bal(self.F[i],C0,self.Cin,self.k,self.V).reshape(self.Cinit.shape[0])
                 return self.C-C0
-                #return sum((self.C-C0)**2)
-            # self.soln=minimize(C,self.Cinit,method='L-BFGS-B',bounds=self.bounds)
-            # self.Cf[i,:]=self.soln.x
-            # self.Cinit = self.soln.x.copy()
             self.soln=fsolve(C,self.Cinit)
             self.Cf[i,:]=self.soln
             self.Cinit=self.soln.copy()
@@ -328,16 +319,9 @@ def Rxtr_Recycle(FR, TR, R_Frac, rxn_reg = False):
         FinR3 = MixR3.Fout
         CpR3 = MixR3.Cpmix
         ρR3 = MixR3.pmix
-        # print(FinR3)
         CinR = vstack([C0F1, C0R3])
         err = (Fpd*ReacR2.p-(FR[0]*ρR[0]+FR[1]*ρR[1]+FR[2]*ρR[2]))**2
         i += 1
-    # print(i)
-    # print(ReacR1.mH2O)
-    # print(ReacR2.Cf)
-    # print(ReacR2.soln)
-    # print(ReacR1.F)
-    # print(ReacR2.F)
     if rxn_reg:
         R1_rxn = ReacR1.soln[:-1]
         R2_rxn = ReacR2.soln[:-1]
@@ -693,22 +677,17 @@ RXNS = Parallel(n_jobs = -1)(delayed(SYST_RECYCLE)(start_point, rxn_reg = True)
 TTr = scale(1/TTr, ub = 1/313, lb = 1/763)
 TTr = hstack([TTr, ones((TTr.shape[0], 1))])
 RXNS = vstack(RXNS[:][:])
-#for i in range(RXNS.shape[0]):
-#    RXNS[i] = RXNS[i] + random.normal(0, 0.1*abs(RXNS[i]))
 lnRXNS = log(abs(RXNS))
 lo = nmin(lnRXNS, axis = 0)
 hi = nmax(lnRXNS, axis = 0)
 sf = std(lnRXNS, axis = 0)
-# lnRXNSn = scale(lnRXNS, hi, lo, sf = 1)
 n_params = 3
 n_eqns = RXNS.shape[1]
 idx = random.uniform(-10, 10, size = 100)
 idx1 = [1, 4, 7, 10, 15]
 lb = -100*ones((n_params*n_eqns))
-# lb[idx1] = 0
 lb = lb.reshape(n_eqns, n_params)
 ub = 100*ones((n_params*n_eqns))
-# ub[idx1] = 1e-6
 ub = ub.reshape(n_eqns, n_params)
 thetaR = ones(shape = (n_eqns, n_params))
 theta = ones(n_params)
@@ -875,172 +854,3 @@ def SYST_RECYCLE_REF(T):
 # ax3D1p.tick_params(axis='both',which='major',labelsize=20);
 # ax3D1p.tick_params(axis='z',pad=20)
 # pyp.title(r'$Reactor\ Cost\ Function\ f({\bf x})$',fontsize=24,pad=35)
-#%% BAYESIAN OPTIMIZATION
-# Descale function for x scaled to be in scaling_factor range
-# def descale(x,lb,ub,scaling_factor=1):
-#     b=(ub+lb)/2
-#     m=(b-lb)/scaling_factor
-#     return m*x+b
-# # Scaling function for scaling x to be in scaling_factor range
-# def scale(x,lb,ub,scaling_factor=1):
-#     m=2*scaling_factor/(ub-lb)
-#     b=scaling_factor-m*ub
-#     return m*x+b
-# # LCB AF
-# class LCB_AF():
-#     def __init__(self,model,exp_w,**refmod):
-#         self.model=model
-#         self.exp_w=exp_w
-#         if refmod:
-#             self.refmod=refmod['refmod']
-#         else:
-#             def zr(x):
-#                 return 0
-#             self.refmod=zr
-#     def LCB(self,x):
-#         x=array([x]).reshape(-1,1); x=x.reshape(1,x.shape[0])
-#         mu,std=self.model.predict(x,return_std=True); std=std.reshape(-1,1)
-#         if str(type(self.refmod))=="<class '__main__.Network'>":
-#             yref=self.refmod(torch.from_numpy(x).float()).data.numpy()  
-#         else:
-#             yref=self.refmod(x)
-#         return (yref+mu-exp_w*std).flatten()
-# # Optimiztion Run
-# TTinitgp=random.uniform(-1,1,(1,2))
-# Ctinitgp=SYST(descale(TTinitgp,313,763))[-1].reshape(-1,1)
-# Ctbestgp=min(Ctinitgp).reshape(-1,1)
-# kernel=gpr.kernels.Matern(1,(0.1,100),nu=2.5)
-# modelgp=gpr.GaussianProcessRegressor(kernel,alpha=1e-6,normalize_y=True,
-#         n_restarts_optimizer=10)
-# modelgp.fit(TTinitgp,Ctinitgp)
-# LCBgp=LCB_AF(modelgp,exp_w)
-# TT0=random.uniform(-1,1,(100,2))
-# opt=Parallel(n_jobs=-1)(delayed(minimize)(LCBgp.LCB,x0=start_point,method='L-BFGS-B',
-#     bounds=bnds2) for start_point in TT0)
-# TTnxtgp=array([res.x for res in opt],dtype='float')
-# funsgp=array([atleast_1d(res.fun)[0] for res in opt])
-# for i in range(3*t):
-#     TTnxt=TTnxtgp[argmin(funsgp)].reshape(1,2)
-#     Ctnxt=SYST(descale(TTnxt,313,763))[-1].reshape(-1,1)
-#     TTinitgp=vstack([TTinitgp,TTnxt])
-#     Ctinitgp=vstack([Ctinitgp,Ctnxt])
-#     Ctbestgp=vstack([Ctbestgp,min(Ctinitgp)])
-#     modelgp.fit(TTinitgp,Ctinitgp)
-#     TT0=random.uniform(-1,1,(100,2))
-#     opt=Parallel(n_jobs=-1)(delayed(minimize)(LCBgp.LCB,x0=start_point,method='L-BFGS-B',
-#     bounds=bnds2) for start_point in TT0)
-#     TTnxtgp=array([res.x for res in opt],dtype='float')
-#     funsgp=array([atleast_1d(res.fun)[0] for res in opt])
-
-# # Distributed optimization
-# TTinitdist=random.uniform(-1,1,(1,2))
-# Ct1initdist,Ct2initdist,Ctinitdist=SYST(descale(TTinitdist,313,763))
-# Ct1initdist=Ct1initdist.reshape(-1,1)
-# Ct2initdist=Ct2initdist.reshape(-1,1)
-# Ctinitdist=Ctinitdist.reshape(-1,1)
-# kernel=gpr.kernels.Matern(1,(0.1,100),nu=2.5)
-# modeldist=gpr.GaussianProcessRegressor(kernel,alpha=1e-6,normalize_y=True,
-#           n_restarts_optimizer=10)
-# model1dist=gpr.GaussianProcessRegressor(kernel,alpha=1e-6,normalize_y=True,
-#           n_restarts_optimizer=10)
-# model2dist=gpr.GaussianProcessRegressor(kernel,alpha=1e-6,normalize_y=True,
-#           n_restarts_optimizer=10)
-# modeldist.fit(TTinitdist,Ctinitdist)
-# model1dist.fit(TTinitdist,Ct1initdist)
-# model2dist.fit(TTinitdist,Ct2initdist)
-# LCB1dist=LCB_AF(model1dist,exp_w)
-# LCB2dist=LCB_AF(model2dist,exp_w)
-# TT0=random.uniform(-1,1,(100,2))
-# opt=Parallel(n_jobs=-1)(delayed(minimize)(LCB1dist.LCB,x0=start_point,method='L-BFGS-B',
-#     bounds=bnds2) for start_point in TT0)
-# TTnxtgp=array([res.x for res in opt],dtype='float')
-# funsgp=array([atleast_1d(res.fun)[0] for res in opt])
-# for i in range(3*t):
-#     TTnxt=TTnxtgp[argmin(funsgp)].reshape(1,2)
-#     Ct1nxt,Ct2nxt,Ctnxt=SYST(descale(TTnxt,313,763))
-#     Ct1nxt=Ct1nxt.reshape(-1,1)
-#     Ct2nxt=Ct2nxt.reshape(-1,1)
-#     Ctnxt=Ctnxt.reshape(-1,1)
-#     TTinitdist=vstack([TTinitdist,TTnxt])
-#     Ct1initdist=vstack([Ct1initdist,Ct1nxt])
-#     Ct2initdist=vstack([Ct2initdist,Ct2nxt])
-#     Ctinitdist=vstack([Ctinitdist,Ctnxt])
-#     model1dist.fit(TTinitdist,Ct1initdist)
-#     model2dist.fit(TTinitdist,Ct2initdist)
-#     modeldist.fit(TTinitdist,Ctinitdist)
-#     TT0=random.uniform(-1,1,(100,2))
-#     if i%2==0:
-#         opt=Parallel(n_jobs=-1)(delayed(minimize)(LCB2dist.LCB,x0=start_point,method='L-BFGS-B',
-#         bounds=bnds2) for start_point in TT0)
-#     else:
-#         opt=Parallel(n_jobs=-1)(delayed(minimize)(LCB1dist.LCB,x0=start_point,method='L-BFGS-B',
-#         bounds=bnds2) for start_point in TT0)
-#     TTnxtgp=array([res.x for res in opt],dtype='float')
-#     funsgp=array([atleast_1d(res.fun)[0] for res in opt])
-
-# # Distributed plus reference optimization
-# TTinitref=random.uniform(-1,1,(1,2))
-# Ct1initref,Ct2initref,Ctinitref=SYST(descale(TTinitref,313,763))
-# Ct1initref=Ct1initref.reshape(-1,1)
-# Ct2initref=Ct2initref.reshape(-1,1)
-# Ctinitref=Ctinitref.reshape(-1,1)
-# d1initref,d2initref,dinitref=SYST_REF(descale(TTinitref,313,763))
-# d1initref=Ct1initref-d1initref
-# d2initref=Ct2initref-d2initref
-# dinitref=Ctinitref-dinitref
-# kernel=gpr.kernels.Matern(1,(0.1,100),nu=2.5)
-# modelref=gpr.GaussianProcessRegressor(kernel,alpha=1e-6,normalize_y=True,
-#           n_restarts_optimizer=10)
-# model1ref=gpr.GaussianProcessRegressor(kernel,alpha=1e-6,normalize_y=True,
-#           n_restarts_optimizer=10)
-# model2ref=gpr.GaussianProcessRegressor(kernel,alpha=1e-6,normalize_y=True,
-#           n_restarts_optimizer=10)
-# modelref.fit(TTinitref,dinitref)
-# model1ref.fit(TTinitref,d1initref)
-# model2ref.fit(TTinitref,d2initref)
-# def SYST_REF1(T):
-#     T=descale(T,313,763)
-#     return SYST_REF(T)[0]
-# LCB1ref=LCB_AF(model1ref,exp_w,**{'refmod':SYST_REF1})
-# def SYST_REF2(T):
-#     T=descale(T,313,763)
-#     return SYST_REF(T)[1]
-# LCB2ref=LCB_AF(model2ref,exp_w,**{'refmod':SYST_REF2})
-# TT0=random.uniform(-1,1,(100,2))
-# opt=Parallel(n_jobs=-1)(delayed(minimize)(LCB1ref.LCB,x0=start_point,method='L-BFGS-B',
-#     bounds=bnds2) for start_point in TT0)
-# TTnxtgp=array([res.x for res in opt],dtype='float')
-# funsgp=array([atleast_1d(res.fun)[0] for res in opt])
-# for i in range(3*t):
-#     TTnxt=TTnxtgp[argmin(funsgp)].reshape(1,2)
-#     Ct1nxt,Ct2nxt,Ctnxt=SYST(descale(TTnxt,313,763))
-#     Ct1nxt=Ct1nxt.reshape(-1,1)
-#     Ct2nxt=Ct2nxt.reshape(-1,1)
-#     Ctnxt=Ctnxt.reshape(-1,1)
-#     d1nxt,d2nxt,dnxt=SYST_REF(descale(TTnxt,313,763))
-#     d1nxt=Ct1nxt-d1nxt
-#     d2nxt=Ct2nxt-d2nxt
-#     dnxt=Ctnxt-dnxt
-#     d1nxt=d1nxt.reshape(-1,1)
-#     d2nxt=d2nxt.reshape(-1,1)
-#     dnxt=dnxt.reshape(-1,1)
-#     TTinitref=vstack([TTinitref,TTnxt])
-#     Ct1initref=vstack([Ct1initref,Ct1nxt])
-#     Ct2initref=vstack([Ct2initref,Ct2nxt])
-#     Ctinitref=vstack([Ctinitref,Ctnxt])
-#     d1initref=vstack([d1initref,d1nxt])
-#     d2initref=vstack([d2initref,d2nxt])
-#     dinitref=vstack([dinitref,dnxt])
-#     model1ref.fit(TTinitref,d1initref)
-#     model2ref.fit(TTinitref,d2initref)
-#     modelref.fit(TTinitref,dinitref)
-#     TT0=random.uniform(-1,1,(100,2))
-#     if i%2==0:
-#         opt=Parallel(n_jobs=-1)(delayed(minimize)(LCB2ref.LCB,x0=start_point,method='L-BFGS-B',
-#         bounds=bnds2) for start_point in TT0)
-#     else:
-#         opt=Parallel(n_jobs=-1)(delayed(minimize)(LCB1ref.LCB,x0=start_point,method='L-BFGS-B',
-#         bounds=bnds2) for start_point in TT0)
-#     TTnxtgp=array([res.x for res in opt],dtype='float')
-#     funsgp=array([atleast_1d(res.fun)[0] for res in opt])
-# pyp.show()
