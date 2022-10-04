@@ -158,8 +158,6 @@ class BO():
         self.xgp = self.descale(x)
         self.ygp = y
         self.ref_optim = False
-        self.dist_optim = False
-        self.distref_optim = False
         self.splt_optim = False
         self.splt_optimref = False
         self.spltvar_optim = False
@@ -991,22 +989,6 @@ class BO():
             ax1.plot(itr, self.ytru, color = 'blue', linewidth = 3, label = 'Ref-BO');
             yliml = min(yliml, min(self.ytru)-0.01*abs(min(self.ytru)))
             ylimu = max(ylimu, max(self.ytru)+0.01*abs(max(self.ytru)))
-        if self.dist_optim:
-            itr = np.arange(1, self.trialsdist+2, 1)
-            yplot = list(self.ydist.values())[-1]
-            ax1.scatter(itr, yplot, marker = 'o', color = 'white', edgecolor = 'red',
-                    zorder = 3, s = 200);
-            ax1.plot(itr, yplot, color = 'red', linewidth = 3, label = 'Dist BO');
-            yliml = min(yliml, min(yplot)-0.01*abs(min(yplot)))
-            ylimu = max(ylimu, max(yplot)+0.01*abs(max(yplot)))
-        if self.distref_optim:
-            itr = np.arange(1, self.trialsdr+2, 1)
-            yplot = list(self.ydistref.values())[-1]
-            ax1.scatter(itr, yplot, marker = 'o', color = 'white', edgecolor = 'green',
-                    zorder = 3, s = 200);
-            ax1.plot(itr, yplot, color = 'green', linewidth = 3, label = 'Dist BO+Ref');
-            yliml = min(yliml, min(yplot)-0.01*abs(min(yplot)))
-            ylimu = max(ylimu, max(yplot)+0.01*abs(max(yplot)))
         if self.splt_optim:
             itr = np.arange(1, self.trialsplt+2, 1)
             ax1.scatter(itr, self.yspltbst, marker = 'o', color = 'white', edgecolor = 'purple',
