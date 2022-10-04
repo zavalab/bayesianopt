@@ -9,14 +9,11 @@ warnings.simplefilter('ignore', RuntimeWarning)
 ## RECYCLE REACTOR NETWORK
 # Physicanl, Kinetic, and Thermodynamic parameters
 R=8.314
-#k0R=np.array([1000,1250,950,1100]);
-#EaR=np.array([32000,35000,40000,33000]);
 k0R = np.array([2.3283e8, 3.6556e9, 1.5234e12, 5.5640e8])
 EaR = np.array([61200, 71800, 96700, 64500])
-#HR=np.array([-210000,-1700000,-1500000,-350000])
 HR = np.array([ -450000., -300000., -250000.,  -500000.])
 ρR=np.array([850,950,875]); CpR=np.array([3000,4000,2900]);
-CpH2O=4000; TinH2O=285#298
+CpH2O=4000; TinH2O=285
 alpha = np.array([1000, 1, 500, 50, 5e4, 250])
 Hvap = np.array([35, 50, 39, 48, 27, 42])
 K_init = 1e-3
@@ -26,21 +23,18 @@ VR=np.array([1,1.5]);
 C0F1=np.array([5000,0,0,0,0,0])
 C0F2=np.array([0,0,0,1000,0,0])
 C0F3=np.array([0,0,0,0,0,1000])
-C0var=np.loadtxt('C:/Users/leo/OneDrive - UW-Madison/Research/EFRI-DESIGN-OF-EXPERIMENTS/Scripts/bayesopt/Toy-Reactors/C_var.txt')
-#C0var=np.loadtxt('/home/gonzlezchvez/bayesopt/Toy-Reactors/C_var2.txt')
+C0var=np.loadtxt('./C_var.txt')
 FR = np.array([0.100, 0.075, 0.075])
 R_Frac = 1e-12
 rev_ratio = np.array([100, 100, 100, 100])
 
 ## Economic Parameter
-cB=-0.48; cE=-0.15; cA=0.12; cC=0.075; cD=0.15; cF=0.05; cT=0.010; #0.0035
+cB=-0.48; cE=-0.15; cA=0.12; cC=0.075; cD=0.15; cF=0.05; cT=0.010;
 c3=np.array([cA,cB,cC,cD,cE,cF,cT])
 
 ## Initial Guesses
 Cinit3=np.array([80,1300,200,10,130,120])
 ##############################################################################
-#T range is 313 to 763
-#F range is 90 to 100
 #Units are all in MKH (Hours) 
 
 ## REACTOR CLASS 
@@ -353,35 +347,26 @@ def SYST_RECYCLE(T, FR, R_Frac, Cdist, rxn_reg=False):
 #%% RECYCLE LOOP REFERENCE MODEL FORMULATION
 # Reaction Regressions
 def scale(x, ub, lb, sf = 1):
-    # m = sf/(ub-lb)
-    # b = -lb*sf/(ub-lb)
     m = 2*sf/(ub-lb)
     b = sf-m*ub
     return m*x+b
 
 def descale(x, ub, lb, sf = 1):
-    # m = (ub-lb)/sf
-    # b = lb
     b = (ub+lb)/2
     m = (b-lb)/sf
     return m*x+b
 
 def RXTR_REG():
-    #TTr = np.random.uniform(303, 423, (200, 2))
     TTr = np.linspace(303, 423, 10)
     TTr = np.meshgrid(TTr, TTr)
     TTr = np.hstack([TTr[0].reshape(-1, 1), TTr[1].reshape(-1, 1)])
-    # C0var = np.ones((TTr.shape[0], 3))
     INPTS = np.hstack([TTr, C0var[:TTr.shape[0]]])
     RXNS = Parallel(n_jobs = 4)(delayed(SYST_RECYCLE)(INPTS[i, :2], FR, R_Frac,
                                                       INPTS[i, 2:], rxn_reg = True)
                                 for i in np.arange(0, INPTS.shape[0], 1))
-    #TTr = TTr+random.normal(0, 5, (200, 2))
     TTr = scale(1/TTr, ub = 1/303, lb = 1/423)
     TTr = np.hstack([TTr, TTr**2, TTr**3, np.ones((TTr.shape[0], 1))])
     RXNS = np.vstack(RXNS[:][:])
-    # for i in range(RXNS.shape[0]):
-    #        RXNS[i] = RXNS[i] + np.random.normal(0, 0.05*abs(RXNS[i]))
     lnRXNS = np.log(abs(RXNS))
     lo = np.min(lnRXNS, axis = 0)
     hi = np.max(lnRXNS, axis = 0)
@@ -394,17 +379,11 @@ def RXTR_REG():
     lb[:4, 1] = 0
     lb[:4, 3] = 0
     lb[:4, 5] = 0
-    # lb[4:, 0] = 0
-    # lb[4:, 2] = 0
-    # lb[4:, 4] = 0
     ub = 100*np.ones((n_params*n_eqns))
     ub = ub.reshape(n_eqns, n_params)
     ub[:4, 1] = 1e-9
     ub[:4, 3] = 1e-9
     ub[:4, 5] = 1e-9
-    # ub[4:, 0] = 1e-9
-    # ub[4:, 2] = 1e-9
-    # ub[4:, 4] = 1e-9
     thetaR = np.ones(shape = (n_eqns, n_params))
     theta = np.ones(n_params)
     print('Calculation of reaction model weights...')
@@ -544,7 +523,7 @@ def RXTR_REG():
             ρR3 = np.ones(TR.shape[0])
             CpR3 = np.ones(TR.shape[0])
             for i in range(TR.shape[0]):
-                CinR3 = np.array([CfFl2[i], C0F3*Cdist[2]], dtype = tuple) # Fix this, should not be R1, should be concentration of outlet
+                CinR3 = np.array([CfFl2[i], C0F3*Cdist[2]], dtype = tuple)
                 Tmix3 = np.array([TFl2[i], TinR[-1]])
                 Fmix3 = np.array([Fr[i], FR[-1]])
                 pmix3=np.array([ReacR2_REF.p[i], ρR[-1]])
