@@ -98,15 +98,11 @@ class BO():
                     
 
     def descale(self, x, scaling_factor = 1):
-        # b = (self.ub+self.lb)/2
-        # m = (b-self.lb)/scaling_factor
         m = (self.ub-self.lb)/scaling_factor
         b = self.lb
         return m*x+b
     
     def scale(self, x, scaling_factor = 1):
-        # m = 2*scaling_factor/(self.ub-self.lb)
-        # b = scaling_factor-m*self.ub
         m = scaling_factor/(self.ub-self.lb)
         b = -self.lb/(self.ub-self.lb)
         return m*x+b
@@ -119,7 +115,6 @@ class BO():
         self.timefgp = np.ones(self.trialsgp+1)
         sf = scaling_factor
         if xinit is None:
-            # x = np.random.uniform(-sf, sf, (1, self.dim))
             x = np.random.uniform(0, sf, (1, self.dim))
         else:
             x = xinit.reshape(1, self.dim)
@@ -131,7 +126,6 @@ class BO():
                                                   normalize_y = True,
                                                   n_restarts_optimizer = 10)
         modelgp.fit(x, y)
-        # x0 = np.random.uniform(-sf, sf, (100, self.dim))
         x0 = np.random.uniform(0, sf, (128, self.dim))
         LCBgp = LCB_AF(modelgp, self.dim, self.exp_w, self.descale).LCB
         opt = Parallel(n_jobs = cores)(delayed(minimize)(LCBgp, x0 = start_point,
@@ -151,7 +145,6 @@ class BO():
             x = np.vstack([x, xnxt])
             y = np.vstack([y, ynxt])
             modelgp.fit(x, y)
-            # x0 = np.random.uniform(-sf, sf, (100, self.dim))
             x0 = np.random.uniform(0, sf, (128, self.dim))
             opt = Parallel(n_jobs = cores)(delayed(minimize)(LCBgp, x0 = start_point,
                                                       method = 'L-BFGS-B',
@@ -184,7 +177,6 @@ class BO():
         refmod = self.refmod['refmod']
         sf = scaling_factor
         if xinit is None:
-            # x = np.random.uniform(-sf, sf, (1, self.dim))
             x = np.random.uniform(0, sf, (1, self.dim))
         else:
             x = xinit.reshape(1, self.dim)
@@ -200,7 +192,6 @@ class BO():
                                                   normalize_y = True,
                                                   n_restarts_optimizer = 10)
         self.modeleps.fit(x, eps)
-        # x0 = np.random.uniform(-sf, sf, (100, self.dim))
         x0 = np.random.uniform(0, sf, (128, self.dim))
         LCBref = LCB_AF(self.modeleps, self.dim, self.exp_w, self.descale, **self.refmod).LCB
         opt = Parallel(n_jobs = cores)(delayed(minimize)(LCBref, x0 = start_point,
@@ -225,7 +216,6 @@ class BO():
             y = np.vstack([y, ynxt])
             eps = np.vstack([eps, epsnxt])
             self.modeleps.fit(x, eps)
-            # x0 = np.random.uniform(-sf, sf, (100, self.dim))
             x0 = np.random.uniform(0, sf, (128, self.dim))
             opt = Parallel(n_jobs = cores)(delayed(minimize)(LCBref, x0 = start_point,
                                                       method = 'L-BFGS-B', tol = 1e-6,
@@ -239,126 +229,6 @@ class BO():
         self.xref = self.descale(x)
         self.ytru = y
         self.eps = eps
-    
-    def optimizerdist(self, trials, distributions, cores = 4, xinit = None):
-        print('Distirbuted BO Run...')
-        self.trialsdist = trials
-        funcs={}
-        y = {}
-        LCBdist = {}
-        if xinit is None:
-            # x = np.random.uniform(-1, 1, (1, self.dim))
-            x = np.random.uniform(0, 1, (1, self.dim))
-        else:
-            x = xinit.reshape(1, self.dim)
-        for i in range(distributions):
-            idx = 'model'+str(i+1)+'dist'
-            funcs[idx] = gpr.GaussianProcessRegressor(self.kernel, alpha = 1e-6,
-                                                      normalize_y = True,
-                                                      n_restarts_optimizer = 10)
-            y['dist'+str(i+1)] = self.distmod(self.descale(x))[i]
-            funcs[idx].fit(x, y['dist'+str(i+1)])
-            LCBdist['dist'+str(i)] = LCB_AF(funcs[idx], self.dim, self.exp_w, self.descale).LCB
-        funcs['modeldist'] = gpr.GaussianProcessRegressor(self.kernel, alpha = 1e-6, 
-                                                  normalize_y = True,
-                                                  n_restarts_optimizer = 10)
-        y['dist'] = self.distmod(self.descale(x))[-1]
-        funcs = OrderedDict(funcs)
-        y = OrderedDict(y)
-        LCBdist = OrderedDict(LCBdist)
-        # x0 = np.random.uniform(-1, 1, (100, self.dim))
-        x0 = np.random.uniform(0, 1, (128, self.dim))
-        opt = Parallel(n_jobs = cores)(delayed(minimize)(LCBdist['dist1'], x0 = start_point,
-                                                      method = 'L-BFGS-B',
-                                                      bounds = self.bounds)
-                                    for start_point in x0)
-        xnxts = np.array([res.x for res in opt], dtype  = 'float')
-        funs = np.array([np.atleast_1d(res.fun)[0] for res in opt])
-        for i in range(self.trialsdist):
-            xnxt = xnxts[np.argmin(funs)].reshape(1, self.dim)
-            x = np.vstack([x, xnxt])
-            for j, k, l in zip(funcs.keys(), y.keys(), range(len(funcs))):
-                ynxt = self.distmod(self.descale(xnxt))[l]
-                y[k] = np.vstack([y[k], ynxt])
-                funcs[j].fit(x, y[k])
-            LCBiter = list(LCBdist.values())[(i+1)%len(LCBdist)]
-            # x0 = np.random.uniform(-1, 1, (100, self.dim))
-            x0 = np.random.uniform(0, 1, (128, self.dim))
-            opt = Parallel(n_jobs = 4)(delayed(minimize)(LCBiter, x0 = start_point,
-                                                      method = 'L-BFGS-B',
-                                                      bounds = self.bounds)
-                                    for start_point in x0)
-            xnxts = np.array([res.x for res in opt], dtype  = 'float')
-            funs = np.array([np.atleast_1d(res.fun)[0] for res in opt])
-        self.dist_optim = True
-        self.modeldist = funcs
-        self.xdist = self.descale(x)
-        self.ydist = y
-    
-    def optimizerdistref(self, trials, distributions, xinit = None):
-        print('Distributed BO with Reference Model Run...')
-        self.trialsdr = trials
-        epsmod={}
-        y = {}
-        eps = {}
-        LCBdr = {}
-        if xinit is None:
-            # x = np.random.uniform(-1, 1, (1, self.dim))
-            x = np.random.uniform(0, 1, (1, self.dim))
-        else:
-            x = xinit.reshape(1, self.dim)
-        for i in range(distributions):
-            idx = 'dist_eps_model'+str(i+1)
-            idx2 = 'dist'+str(i+1)
-            epsmod[idx] = gpr.GaussianProcessRegressor(self.kernel, alpha = 1e-6,
-                                                      normalize_y = True,
-                                                      n_restarts_optimizer = 10)
-            y[idx2] = self.distmod(self.descale(x))[i]
-            eps[idx2] = y[idx2]-list(self.dist_ref.values())[i](self.descale(x))
-            epsmod[idx].fit(x, eps[idx2])
-            refmod = {'refmod': list(self.dist_ref.values())[i]}
-            LCBdr[idx2] = LCB_AF(epsmod[idx], self.dim, self.exp_w, self.descale, **refmod).LCB
-        epsmod['dist_eps_model'] = gpr.GaussianProcessRegressor(self.kernel, alpha = 1e-6, 
-                                                  normalize_y = True,
-                                                  n_restarts_optimizer = 10)
-        y['dist'] = self.distmod(self.descale(x))[-1]
-        eps['dist'] = y['dist']-list(self.dist_ref.values())[-1](self.descale(x))
-        epsmod['dist_eps_model'].fit(x, eps['dist'])
-        epsmod = OrderedDict(epsmod)
-        y = OrderedDict(y)
-        eps = OrderedDict(eps)
-        LCBdr = OrderedDict(LCBdr)
-        # x0 = np.random.uniform(-1, 1, (100, self.dim))
-        x0 = np.random.uniform(0, 1, (128, self.dim))
-        opt = Parallel(n_jobs = -1)(delayed(minimize)(LCBdr['dist1'], x0 = start_point,
-                                                      method = 'L-BFGS-B',
-                                                      bounds = self.bounds)
-                                    for start_point in x0)
-        xnxts = np.array([res.x for res in opt], dtype  = 'float')
-        funs = np.array([np.atleast_1d(res.fun)[0] for res in opt])
-        for i in range(self.trialsdr):
-            xnxt = xnxts[np.argmin(funs)].reshape(1, self.dim)
-            x = np.vstack([x, xnxt])
-            for j, k, l in zip(epsmod.keys(), y.keys(), range(len(epsmod))):
-                ynxt = self.distmod(self.descale(xnxt))[l]
-                epsnxt = ynxt-list(self.dist_ref.values())[l](self.descale(xnxt))
-                y[k] = np.vstack([y[k], ynxt])
-                eps[k] = np.vstack([eps[k], epsnxt])
-                epsmod[j].fit(x, eps[k])
-            LCBiter = list(LCBdr.values())[(i+1)%len(LCBdr)]
-            # x0 = np.random.uniform(-1, 1, (100, self.dim))
-            x0 = np.random.uniform(0, 1, (128, self.dim))
-            opt = Parallel(n_jobs = -1)(delayed(minimize)(LCBiter, x0 = start_point,
-                                                      method = 'L-BFGS-B',
-                                                      bounds = self.bounds)
-                                    for start_point in x0)
-            xnxts = np.array([res.x for res in opt], dtype  = 'float')
-            funs = np.array([np.atleast_1d(res.fun)[0] for res in opt])
-        self.distref_optim = True
-        self.modeldistref = epsmod
-        self.xdistref = self.descale(x)
-        self.ydistref = y
-        self.epsdistref = eps
         
     def optimizersplt(self, trials, partition_num, partition_cons, scaling_factor, fcores = 4, afcores = 4, xinit = None):
         """
@@ -429,7 +299,6 @@ class BO():
         init_pts = max(1, int(round(128/self.split, 0)))
         x0 = np.random.uniform(0, sf, (init_pts, self.dim))
         for i in range(self.split):
-            # x0 = np.random.uniform(-sf, sf, (100, self.dim))
             opt = Parallel(n_jobs = afcores)(delayed(minimize)(LCB, x0 = start_points,
                                                           method = 'SLSQP',
                                                           bounds = self.bounds,
@@ -557,7 +426,6 @@ class BO():
         init_pts = max(1, int(round(128/self.splitref, 0)))
         x0 = np.random.uniform(0, sf, (init_pts, self.dim))
         for i in range(self.splitref):
-            # x0 = np.random.uniform(-sf, sf, (100, self.dim))
             opt = Parallel(n_jobs = afcores)(delayed(minimize)(LCB, x0 = start_points,
                                                           method = 'SLSQP',
                                                           bounds = self.bounds, tol = 1e-6,
@@ -646,7 +514,6 @@ class BO():
                     x0 = xinit.reshape(1, self.dim)
                     switch = False
             if n!=len(self.conshyp[str(i+1)]):
-                # x0 = np.random.uniform(-sf, sf, (self.dim,))
                 x0 = np.random.uniform(0, sf, (self.dim,))
                 x0 = minimize(intpts, x0, bounds = self.bounds, constraints = self.conshyp[str(i+1)]).x
             x = np.vstack([x, x0.reshape(1, self.dim)])
@@ -676,7 +543,6 @@ class BO():
         init_pts = max(1, int(round(128/self.splithyp, 0)))
         x0 = np.random.uniform(0, sf, (init_pts, self.dim))
         for i in range(self.splithyp):
-            # x0 = np.random.uniform(-sf, sf, (100, self.dim))
             opt = Parallel(n_jobs = afcores)(delayed(minimize)(LCB[str(i)], x0 = start_points,
                                                           method = 'SLSQP',
                                                           bounds = self.bounds,
@@ -736,7 +602,6 @@ class BO():
         spltexpw = num_weights
         exp_wl = np.random.exponential(1, spltexpw)
         if xinit is None:
-            # x = np.random.uniform(-sf, sf, (1, self.dim))
             x = np.random.uniform(0, sf, (spltexpw, self.dim))
         else:
             x = xinit.reshape(-1, 1)
@@ -810,7 +675,6 @@ class BO():
         spltnmc = parallel_num
         samp_num = int(sample_num)
         if xinit is None:
-            # x = np.random.uniform(-sf, sf, (1, self.dim))
             x = np.random.uniform(0, sf, (spltnmc, self.dim))
         else:
             x = xinit.reshape(-1, 1)
@@ -829,7 +693,7 @@ class BO():
                                                      n_restarts_optimizer = 10)
         modelnmc.fit(x, y)
         init_pts = max(1, int(round(128/1, 0)))
-        x0 = np.random.uniform(0, 1, (init_pts, self.dim))
+        x0 = np.random.uniform(0, sf, (init_pts, self.dim))
         LCB = LCB_AF(modelnmc, self.dim, self.exp_w, self.descale).LCB
         xnxt = np.ones((spltnmc, self.dim))
         opt = Parallel(n_jobs = 1)(delayed(minimize)(LCB, x0 = start_points,
@@ -934,7 +798,6 @@ class BO():
         div = int(self.dim/self.splitvar)
         sf = scaling_factor
         refmod = self.dist_ref['distrefmod']
-        # x = np.random.uniform(-sf, sf, (self.splitvar, self.dim))
         x = liminit*np.ones((self.splitvar, self.dim))
         lwr = x.copy()
         upr = x.copy()+1e-6
@@ -1020,15 +883,10 @@ class BO():
                     lwr[j, j*div:(j+1)*div] = 0
                     upr[j] = xnxt[np.argmin(ynxt[:, j])]+1e-6
                     upr[j, j*div:(j+1)*div] = sf
-                # lwr[j] = xnxt[-1]
-                # lwr[j, j*div:(j+1)*div] = 0
-                # upr[j] = xnxt[-1]+1e-6
-                # upr[j, j*div:(j+1)*div] = sf
             x = np.vstack([x, xnxt])
             y = np.vstack([y, ynxt])
             eps = np.vstack([eps, epsnxt])
             ybst = np.vstack([ybst, np.min(ynxt, axis = 0).reshape(-1,1).T])
-            # x0 = np.random.uniform(-sf, sf, (100, self.dim))
             x0 = np.random.uniform(0, sf, (init_pts, self.dim))
             for j in range(self.splitvar):
                 modelspltvar[str(j+1)].fit(x, eps[:, j])
@@ -1074,7 +932,7 @@ class BO():
                                                              normalize_y = True)
             modembd[str(i+1)].fit(x, d[:, i].reshape(-1, 1))
         LCB = LCB_EMBD(modembd, self.var_num, self.dim, self.exp_w, self.fun, self.descale, self.include_x).LCB
-        x0 = np.random.uniform(0, 1, (100, self.dim))
+        x0 = np.random.uniform(0, sf, (100, self.dim))
         opt = Parallel(n_jobs = afcores)(delayed(minimize)(LCB, x0 = start_point,
                                                            method = 'L-BFGS-B',
                                                            bounds = self.bounds)
@@ -1093,7 +951,7 @@ class BO():
             d = np.vstack([d, dnxt])
             for j in range(self.var_num):
                 modembd[str(j+1)].fit(x, d[:, j])
-            x0 = np.random.uniform(0, 1, (100, self.dim))
+            x0 = np.random.uniform(0, sf, (100, self.dim))
             opt = Parallel(n_jobs = afcores)(delayed(minimize)(LCB, x0 = start_point,
                                                                method = 'L-BFGS-B',
                                                                bounds = self.bounds)
