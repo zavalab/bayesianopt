@@ -8,15 +8,14 @@ from sklearn.exceptions import ConvergenceWarning
 from joblib import Parallel, delayed
 from matplotlib import pyplot as pyp, cm
 import sys
-sys.path.append('./../Models')
+sys.path.append('./Toy-Reactors')
 import RECYL_SYST_MODS4
 # Disable Covergence and Runtime warnings that arise during BO runs due to parameter bounds
 warnings.simplefilter('ignore', RuntimeWarning)
 warnings.simplefilter('ignore', ConvergenceWarning)
 
 exp_w = 2.6
-C0varf = np.loadtxt('./../Models/C_var2.txt')
-# C0var = np.ones((1, 3))
+C0var = np.loadtxt('./../Models/C_var2.txt')
 FR = np.array([0.100, 0.075, 0.075])
 R_Frac = 1e-6
 SYST_RECYCLE = RECYL_SYST_MODS4.SYST_RECYCLE
@@ -34,8 +33,8 @@ Tmod = np.linspace(303, 423, 13)
 Tmod = np.meshgrid(Tmod, Tmod)
 Tmod = np.hstack([Tmod[0].reshape(-1, 1), Tmod[1].reshape(-1, 1)])
 CTREF = np.ones((Tmod.shape[0], 3))
-Ctref = Parallel(n_jobs = 5)(delayed(SYST_RECYCLE_REF)(Tmod, FR, R_Frac, Cdist)
-                             for Cdist in C0varf)
+Ctref = Parallel(n_jobs = 32)(delayed(SYST_RECYCLE_REF)(Tmod, FR, R_Frac, Cdist)
+                             for Cdist in C0var)
 for i in range(3):
     C = np.vstack(Ctref[:][:]).T[:, i::3]
     C = 8*np.sum(C, axis = 1)
@@ -50,15 +49,15 @@ print(mobdtm)
 
 def SYST_C(T):
     CtR = 0
-    for i in range(C0varf.shape[0]):
-        Ctr = 8*SYST_RECYCLE(T, FR, R_Frac, C0varf[i])[-1]
+    for i in range(C0var.shape[0]):
+        Ctr = 8*SYST_RECYCLE(T, FR, R_Frac, C0var[i])[-1]
         CtR += Ctr
     return CtR
 
 def SYST_C_REF(T):
     CtR = 0
-    for i in range(C0varf.shape[0]):
-        Ctr = 8*SYST_RECYCLE_REF(T, FR, R_Frac, C0varf[i])[-1]
+    for i in range(C0var.shape[0]):
+        Ctr = 8*SYST_RECYCLE_REF(T, FR, R_Frac, C0var[i])[-1]
         CtR += Ctr
     return CtR
 
@@ -88,16 +87,8 @@ def SYST_C_DISTGP(T):
 
 def SYST_C_DIST(T):
     CtR = 0
-    for i in range(C0varf.shape[0]):
-        Ctr = SYST_RECYCLE(T, FR, R_Frac, C0varf[i])
-        Ctr = np.vstack(Ctr[:]).T
-        CtR += 8*Ctr
-    return CtR
-
-def SYST_C_DIST_REF(T):
-    CtR = 0
-    for i in range(C0varf.shape[0]):
-        Ctr = SYST_RECYCLE_REF(T, FR, R_Frac, C0varf[i])
+    for i in range(C0var.shape[0]):
+        Ctr = SYST_RECYCLE(T, FR, R_Frac, C0var[i])
         Ctr = np.vstack(Ctr[:]).T
         CtR += 8*Ctr
     return CtR
@@ -135,88 +126,71 @@ for i in range(blks**2):
 gpparts = gpr.GaussianProcessRegressor(kergp, alpha = 1e-6, n_restarts_optimizer = 10,
                                        normalize_y = True)
 gpparts.fit(scale(Tmod), (CTREF[:, -1]).reshape(-1, 1))
-parts = np.array([-365, -345, -330]) # ref mod with g_1(T_1) and g_2(T_2)
+parts = np.array([-461, -383])
 con1 = lambda x: (gpparts.predict(x.reshape(1, 2))).flatten()
 con2 = lambda x: x[0]
 nlc1 = NonlinearConstraint(con1, -1e4, parts[0])
 nlc21 = NonlinearConstraint(con1, parts[0], parts[1])
-nlc22 = NonlinearConstraint(con2, 0.25, 1)
-nlc31 = NonlinearConstraint(con1, parts[1], parts[2])
-nlc32 = NonlinearConstraint(con2, 0, 0.25)
-nlc4 = NonlinearConstraint(con1, parts[2], 1e4)
-# nlc5 = NonlinearConstraint(con1, parts[2], 0)
-cons = {'1': [nlc1], '2': [nlc21], '3': [nlc31], '4': [nlc4]}#, '5': [nlc5]}
-# Using Curves we generate by analyzing the ref model
-# con1 = lambda x: 13*(x[0]-0.066)**2+x[1]
-# nlc1 = NonlinearConstraint(con1, -100, 0.7)
-# con21 = lambda x: 13*(x[0]-0.066)**2+x[1]
-# nlc21 = NonlinearConstraint(con21, 0.7, 100)
-# con22 = lambda x: 6.0*(x[0]-0.07)**2+x[1]
-# nlc22 = NonlinearConstraint(con22, -100, 0.87)
-# con31 = lambda x: 6.0*(x[0]-0.07)**2+x[1]
-# nlc31 = NonlinearConstraint(con31, 0.87, 100)
-# con32 = lambda x: x[1]-2.583*x[0]
-# nlc32 = NonlinearConstraint(con32, -1.1, 100)
-# con4 = lambda x: x[1]-2.583*x[0]
-# nlc4 = NonlinearConstraint(con4, -100, -1.1)
-# cons = {'1': [nlc1], '2': [nlc21, nlc22], '3': [nlc31, nlc32], '4': [nlc4]}
-# Variable split initial x1, x2
-# liminit = REACOPTIM.scale(np.array([336, 318]))
-liminit = REACOPTIM.scale(np.array([336, 380]))
+nlc22 = NonlinearConstraint(con2, 0.4, 1.1)
+nlc31 = NonlinearConstraint(con1, parts[0], parts[1])
+nlc32 = NonlinearConstraint(con2, 0, 0.38)
+nlc4 = NonlinearConstraint(con1, parts[1], 1e4)
+cons = {'1': [nlc1], '2': [nlc21, nlc22], '3': [nlc31, nlc32], '4': [nlc4]}
+liminit = REACOPTIM.scale(np.array([400, 423]))
 
 # Start BO Runs
-x0 = np.linspace(0, 1, 3)
+x0 = np.linspace(0, 1, 5)
 x0 = np.meshgrid(x0, x0)
 x0 = np.hstack([x0[0].reshape(-1, 1), x0[1].reshape(-1, 1)])
 
-METGP = np.zeros((50, 4))
+METGP = np.zeros((100, 4))
 PARAMSGP = np.ones(x0.shape)
 DISTGP = np.array([]).reshape(0, dim)
 RESGP = np.ones((METGP.shape[0], x0.shape[0]))
 
-METREF = np.zeros((50, 4))
+METREF = np.zeros((100, 4))
 PARAMSREF = np.ones(x0.shape)
 DISTREF = np.array([]).reshape(0, dim)
 RESREF = np.ones((METREF.shape[0], x0.shape[0]))
 
-METSPLT = np.zeros((13, 4))
+METSPLT = np.zeros((25, 4))
 PARAMSPLT = np.ones(x0.shape)
 DISTSPLT = np.array([]).reshape(0, dim)
 RESPLT = np.ones((METSPLT.shape[0], x0.shape[0]))
 
-METSPLTREF = np.zeros((13, 4))
+METSPLTREF = np.zeros((25, 4))
 PARAMSPLTREF = np.ones(x0.shape)
 DISTSPLTREF = np.array([]).reshape(0, dim)
 RESPLTREF = np.ones((METSPLTREF.shape[0], x0.shape[0]))
 
-METSPLTVAR = np.zeros((16, 4))
+METSPLTVAR = np.zeros((33, 4))
 PARAMSPLTVAR = np.ones(x0.shape)
 DISTSPLTVAR = np.array([]).reshape(0, dim)
 RESPLTVAR = np.ones((METSPLTVAR.shape[0], x0.shape[0]))
 
-METSPLTVAR2 = np.zeros((16, 4))
+METSPLTVAR2 = np.zeros((33, 4))
 PARAMSPLTVAR2 = np.ones(x0.shape)
 DISTSPLTVAR2 = np.array([]).reshape(0, dim)
 RESPLTVAR2 = np.ones((METSPLTVAR2.shape[0], x0.shape[0]))
 
-METHYP = np.zeros((13, 4))
+METHYP = np.zeros((25, 4))
 PARAMSHYP = np.ones(x0.shape)
 DISTHYP = np.array([]).reshape(0, dim)
 RESHYP = np.ones((METHYP.shape[0], x0.shape[0]))
 
-METEXPW = np.zeros((13, 4))
+METEXPW = np.zeros((25, 4))
 PARAMSEXPW = np.ones(x0.shape)
 DISTEXPW = np.array([]).reshape(0, dim)
 RESEXPW = np.ones((METEXPW.shape[0], x0.shape[0]))
 
-METNMC = np.zeros((13, 4))
+METNMC = np.zeros((25, 4))
 PARAMSNMC = np.ones(x0.shape)
 DISTNMC = np.array([]).reshape(0, dim)
 RESNMC = np.ones((METNMC.shape[0], x0.shape[0]))
 
 for i in range(x0.shape[0]):
     start = time.time()
-    REACOPTIM.optimizergp(49, 1, cores = 1, xinit = x0[i])
+    REACOPTIM.optimizergp(99, 1, cores = 1, xinit = x0[i])
     end = time.time()
     print('Run time '+str(end-start)+'s')
     print('iteration '+str(i+1))
@@ -236,9 +210,9 @@ REACOPTIM.ygp = METGP[:, 2].flatten()
 REACOPTIM.timegp = METGP[:, 0].flatten()
 REACOPTIM.timefgp = METGP[:, 1].flatten()
 
-for i in range(1):#x0.shape[0]):
+for i in range(x0.shape[0]):
     start = time.time()
-    REACOPTIM.optimizeref(49, 1, cores = 1, xinit = x0[i])
+    REACOPTIM.optimizeref(99, 1, cores = 1, xinit = x0[i])
     end = time.time()
     print('Run time '+str(end-start)+'s')
     print('iteration '+str(i+1))
@@ -260,7 +234,7 @@ REACOPTIM.timefref = METREF[:, 1].flatten()
 
 for i in range(x0.shape[0]):
     start = time.time()
-    REACOPTIM.optimizersplt(12, 4, cons, 1, fcores = 4, afcores = 1, xinit = x0[i])
+    REACOPTIM.optimizersplt(10, 9, consb, 1, fcores = 9, afcores = 1, xinit = x0[i])
     end = time.time()
     print('Run time '+str(end-start)+'s')
     print('iteration '+str(i+1))
@@ -282,7 +256,7 @@ REACOPTIM.timefsplt = METSPLT[:, 1].flatten()
 
 for i in range(x0.shape[0]):
     start = time.time()
-    REACOPTIM.optimizerspltref(12, 4, cons, 1, fcores = 4, afcores = 1, xinit = x0[i])
+    REACOPTIM.optimizerspltref(24, 4, cons, 1, fcores = 4, afcores = 1, xinit = x0[i])
     end = time.time()
     print('Run time '+str(end-start)+'s')
     print('iteration '+str(i+1))
@@ -304,7 +278,7 @@ REACOPTIM.timefspltref = METSPLTREF[:, 1].flatten()
 
 for i in range(x0.shape[0]):
     start = time.time()
-    REACOPTIM.optimizerspltvar(15, 2, liminit, 1, fcores = 3, afcores = 1, xinit = x0[i])
+    REACOPTIM.optimizerspltvar(32, 2, liminit, 1, fcores = 3, afcores = 1, xinit = x0[i])
     end = time.time()
     print('Run time '+str(end-start)+'s')
     print('iteration '+str(i+1))
@@ -312,7 +286,7 @@ for i in range(x0.shape[0]):
     METSPLTVAR[:, 1] = METSPLTVAR[:, 1]+REACOPTIM.timefspltvar.flatten()
     METSPLTVAR[:, 2] = METSPLTVAR[:, 2]+REACOPTIM.yspltvarbst[:, -1].flatten()
     METSPLTVAR[:, 3] = METSPLTVAR[:, 3]+np.min(REACOPTIM.yspltvarbst[:, -1])
-    print('Best split-var value is '+str(np.min(REACOPTIM.yspltvarbst)/8760))
+    print('Best split-var value is '+str(np.min(REACOPTIM.yspltvarbst[:, -1])))
     PARAMSPLTVAR[i] = REACOPTIM.xspltvar[np.argmin(REACOPTIM.yspltvar[:, -1])]
     DISTSPLTVAR = np.vstack([DISTSPLTVAR, REACOPTIM.xspltvar])
     RESPLTVAR[:, i] = REACOPTIM.yspltvarbst[:, -1]
@@ -323,7 +297,7 @@ METSPLTVAR[:, 3] = METSPLTVAR[:, 3]/(i+1)
 REACOPTIM.yspltvarbst = METSPLTVAR[:, 2].reshape(-1, 1)
 REACOPTIM.timespltvar = METSPLTVAR[:, 0].flatten()
 REACOPTIM.timefspltvar = METSPLTVAR[:, 1].flatten()
-    
+
 def zr(x):
     x = x.reshape(-1, 1)
     x = x.reshape(int(x.shape[0]/2), 2)
@@ -331,7 +305,7 @@ def zr(x):
 REACOPTIM.dist_ref['distrefmod'] = zr
 for i in range(x0.shape[0]):
     start = time.time()
-    REACOPTIM.optimizerspltvar(15, 2, liminit, 1, fcores = 3, afcores = 1, xinit = x0[i])
+    REACOPTIM.optimizerspltvar(32, 2, liminit, 1, fcores = 3, afcores = 1, xinit = x0[i])
     end = time.time()
     print('Run time '+str(end-start)+'s')
     print('iteration '+str(i+1))
@@ -339,7 +313,7 @@ for i in range(x0.shape[0]):
     METSPLTVAR2[:, 1] = METSPLTVAR2[:, 1]+REACOPTIM.timefspltvar.flatten()
     METSPLTVAR2[:, 2] = METSPLTVAR2[:, 2]+REACOPTIM.yspltvarbst[:, -1].flatten()
     METSPLTVAR2[:, 3] = METSPLTVAR2[:, 3]+np.min(REACOPTIM.yspltvarbst[:, -1])
-    print('Best split-var value is '+str(np.min(REACOPTIM.yspltvarbst)/8760))
+    print('Best split-var value is '+str(np.min(REACOPTIM.yspltvarbst)))
     PARAMSPLTVAR2[i] = REACOPTIM.xspltvar[np.argmin(REACOPTIM.yspltvar[:, -1])]
     DISTSPLTVAR2 = np.vstack([DISTSPLTVAR2, REACOPTIM.xspltvar])
     RESPLTVAR2[:, i] = REACOPTIM.yspltvarbst[:, -1]
@@ -350,32 +324,32 @@ METSPLTVAR2[:, 3] = METSPLTVAR2[:, 3]/(i+1)
 
 blks = 2
 dim = 2
-ϕ = 0.45
+phi = 0.45
 consb = {}
 funsb = {}
 funsb['1'] = lambda x: x[0]
 funsb['2'] = lambda x: x[1]
 lwrx = 0
-uprx = 1-ϕ
-lwry = ϕ
+uprx = 1-phi
+lwry = phi
 upry = 1
 j = 1
 for i in range(blks**2):
     nlc1 = NonlinearConstraint(funsb['1'], lwrx, uprx)
     nlc2 = NonlinearConstraint(funsb['2'], lwry, upry)
     consb[str(i+1)] = [nlc1, nlc2]
-    lwrx = lwrx+ϕ
-    uprx = uprx+ϕ
+    lwrx = lwrx+phi
+    uprx = uprx+phi
     if (i+1)%blks == 0:
         lwrx = 0
-        uprx = 1-ϕ
-        lwry = lwry-ϕ
-        upry = upry-ϕ
+        uprx = 1-phi
+        lwry = lwry-phi
+        upry = upry-phi
 expwl = np.array([0.5, 1, 2, 3])
 
 for i in range(x0.shape[0]):
     start = time.time()
-    REACOPTIM.hyperspace(12, 4, consb, 1, fcores = 4, afcores = 1, xinit = x0[i])
+    REACOPTIM.hyperspace(24, 4, consb, 1, fcores = 4, afcores = 1, xinit = x0[i])
     end = time.time()
     print('Run time '+str(end-start)+'s')
     print('iteration '+str(i+1))
@@ -397,7 +371,7 @@ REACOPTIM.timefhyp = METHYP[:, 1].flatten()
 
 for i in range(x0.shape[0]):
     start = time.time()
-    REACOPTIM.optimizerexpw(12, 4, 1, fcores = 4, afcores = 1, xinit = x0[i])
+    REACOPTIM.optimizerexpw(24, 4, 1, fcores = 4, afcores = 1, xinit = x0[i])
     end = time.time()
     print('Run time '+str(end-start)+'s')
     print('iteration '+str(i+1))
@@ -405,7 +379,7 @@ for i in range(x0.shape[0]):
     METEXPW[:, 1] = METEXPW[:, 1]+REACOPTIM.timefexpw.flatten()
     METEXPW[:, 2] = METEXPW[:, 2]+REACOPTIM.ybstexpw.flatten()
     METEXPW[:, 3] = METEXPW[:, 3]+np.min(REACOPTIM.ybstexpw)
-    print('Best κ-varying value is '+str(np.min(REACOPTIM.ybstexpw)/8760))
+    print('Best Îº-varying value is '+str(np.min(REACOPTIM.ybstexpw)))
     PARAMSEXPW[i] = REACOPTIM.xexpw[np.argmin(REACOPTIM.yexpw)]
     DISTEXPW = np.vstack([DISTEXPW, REACOPTIM.xexpw])
     RESEXPW[:, i] = REACOPTIM.ybstexpw[:, 0]
@@ -419,7 +393,7 @@ REACOPTIM.timefexpw = METEXPW[:, 1].flatten()
 
 for i in range(x0.shape[0]):
     start = time.time()
-    REACOPTIM.optimizernmc(12, 4, 20, 1, fcores = 4, afcores = 5, xinit = x0[i])
+    REACOPTIM.optimizernmc(24, 4, 20, 1, fcores = 4, afcores = 5, xinit = x0[i])
     end = time.time()
     print('Run time '+str(end-start)+'s')
     print('iteration '+str(i+1))
@@ -427,7 +401,7 @@ for i in range(x0.shape[0]):
     METNMC[:, 1] = METNMC[:, 1]+REACOPTIM.timefnmc.flatten()
     METNMC[:, 2] = METNMC[:, 2]+REACOPTIM.ybstnmc.flatten()
     METNMC[:, 3] = METNMC[:, 3]+np.min(REACOPTIM.ybstnmc)
-    print('Best NxMCMC value is '+str(np.min(METNMC[:, 3])/(i+1)/8760))
+    print('Best NxMCMC value is '+str(np.min(METNMC[:, 3])/(i+1)))
     PARAMSNMC[i] = REACOPTIM.xnmc[np.argmin(REACOPTIM.ynmc)]
     DISTNMC = np.vstack([DISTNMC, REACOPTIM.xnmc])
     RESNMC[:, i] = REACOPTIM.ybstnmc[:, 0]
@@ -439,113 +413,8 @@ REACOPTIM.ybstnmc = METNMC[:, 2].flatten()
 REACOPTIM.timenmc = METNMC[:, 0].flatten()
 REACOPTIM.timefnmc = METNMC[:, 1].flatten()
 
-# ## GENERTATE FIGURES
-# # Convergence plots
-# REACOPTIM.plots('R1')
-# REACOPTIM.plotstime('R1')
-# REACOPTIM.plotexptime('R1')
-# Partition Plots
-TRgp = np.linspace(303, 423, 451)
-TRgp = np.meshgrid(TRgp, TRgp)
-TRgp = np.hstack([TRgp[0].reshape(-1, 1), TRgp[1].reshape(-1, 1)])
-Ctrefgp = gpparts.predict(REACOPTIM.scale(TRgp)).flatten()
-xxgp = REACOPTIM.scale(TRgp)
-# 1st partition
-idx1 = np.where(Ctrefgp<=parts[0]+5e-1)[0]
-idx2 = np.where(Ctrefgp>=parts[0]-5e-1)[0]
-idx = np.array([], dtype = 'int')
-for i in range(idx2.shape[0]):
-    if idx2[i] in idx1:
-        idx = np.hstack([idx, idx2[i]])
-xf1 = xxgp[idx, 0]
-yf1 = xxgp[idx, 1]
-# 2nd and 3rd partition
-idx1 = np.where(Ctrefgp<=parts[1]+7e-1)[0]
-idx2 = np.where(Ctrefgp>=parts[1]-7e-1)[0]
-idx = np.array([], dtype = 'int')
-for i in range(idx2.shape[0]):
-    if idx2[i] in idx1 and xxgp[idx2[i]][0]<0.5:
-        idx = np.hstack([idx, idx2[i]])
-xf2 = xxgp[idx, 0]
-yf2 = xxgp[idx, 1]
-
-idx1 = np.where(Ctrefgp<=parts[1]+2e-1)[0]
-idx2 = np.where(Ctrefgp>=parts[1]-2e-1)[0]
-idx = np.array([], dtype = 'int')
-for i in range(idx2.shape[0]):
-    if idx2[i] in idx1 and xxgp[idx2[i]][0]>0.5:
-        idx = np.hstack([idx, idx2[i]])
-xf3 = xxgp[idx, 0]
-yf3 = xxgp[idx, 1]
-# xf3 = xf2[np.where(xf2<0.25)]
-# yf3 = yf2[np.where(xf2<0.25)]
-# yf2 = yf2[np.where(xf2>0.25)]
-# xf2 = xf2[np.where(xf2>0.25)]
-# 4th partition
-idx1 = np.where(Ctrefgp<=parts[2]+6e-1)[0]
-idx2 = np.where(Ctrefgp>=parts[2]-6e-1)[0]
-idx = np.array([], dtype = 'int')
-for i in range(idx2.shape[0]):
-    if idx2[i] in idx1:
-        idx = np.hstack([idx, idx2[i]])
-xf4 = xxgp[idx, 0]
-yf4 = xxgp[idx, 1]
-
-idx1 = np.where(Ctrefgp<=parts[2]+3e-0)[0]
-idx2 = np.where(Ctrefgp>=parts[2]-3e-0)[0]
-idx = np.array([], dtype = 'int')
-for i in range(idx2.shape[0]):
-    if idx2[i] in idx1 and xxgp[idx2[i]][0]<0.2:
-        idx = np.hstack([idx, idx2[i]])
-xf5 = xxgp[idx, 0]
-yf5 = xxgp[idx, 1]
-
-
-Tf1 = REACOPTIM.descale(np.hstack([xf1.reshape(-1, 1), yf1.reshape(-1, 1)]))
-Tf2 = REACOPTIM.descale(np.hstack([xf2.reshape(-1, 1), yf2.reshape(-1, 1)]))
-Tf3 = REACOPTIM.descale(np.hstack([xf3.reshape(-1, 1), yf3.reshape(-1, 1)]))
-Tf4 = REACOPTIM.descale(np.hstack([xf4.reshape(-1, 1), yf4.reshape(-1, 1)]))
-Tf5 = REACOPTIM.descale(np.hstack([xf5.reshape(-1, 1), yf5.reshape(-1, 1)]))
-
-fig3D=pyp.figure(figsize=[11,8.5])
-ax3D1=fig3D.add_subplot(111);
-ax3D1.grid(color='gray',axis='both',alpha=0.25); ax3D1.set_axisbelow(True);
-fig1=ax3D1.contourf(xxgp[:, 0].reshape(451,451),xxgp[:, 1].reshape(451,451), Ctrefgp.reshape(451,451),
-                    cmap=cm.jet, levels = np.linspace(-400, -200, 51));
-cbar=pyp.colorbar(fig1);
-cbar.set_label(r'$Operating\ cost\ (1000\ USD/yr)$',fontsize=24,labelpad=15);
-cbar.ax.tick_params(labelsize=20)
-pyp.scatter(xf1, yf1, color = 'w', s = 10, marker = '+')
-pyp.scatter(xf2, yf2, color = 'r', s = 10, marker = '+')
-pyp.scatter(xf3, yf3, color = 'r', s = 10, marker = '+')
-pyp.scatter(xf4, yf4, color = 'g', s = 10, marker = '+')
-pyp.scatter(xf5, yf5, color = 'g', s = 10, marker = '+')
-cbar.ax.tick_params(labelsize=20)
-pyp.xlabel(r'$T_1$',fontsize=24);
-pyp.xticks([0, 0.2, 0.4, 0.6, 0.8, 1]);
-pyp.ylabel(r'$T_1$',fontsize=24);
-pyp.yticks([0, 0.2, 0.4, 0.6, 0.8, 1]);
-pyp.xlim((0, 1)); pyp.ylim((0, 1));
-ax3D1.tick_params(axis='both',which='major',labelsize=20);
-# pyp.savefig('GP_REF_MOD.png', dpi=300,edgecolor='white', bbox_inches='tight', pad_inches=0.1)
-
-fig3D=pyp.figure(figsize=[11,8.5])
-ax3D1=fig3D.add_subplot(111);
-ax3D1.grid(color='gray',axis='both',alpha=0.25); ax3D1.set_axisbelow(True);
-fig1=ax3D1.contourf(TRgp[:, 0].reshape(451,451),TRgp[:, 1].reshape(451,451), Ctrefgp.reshape(451,451),
-                    cmap=cm.jet, levels = np.linspace(-400, -200, 51));
-cbar=pyp.colorbar(fig1);
-cbar.set_label(r'$Operating\ cost\ (1000\ USD/yr)$',fontsize=24,labelpad=15);
-cbar.ax.tick_params(labelsize=20)
-cbar.ax.tick_params(labelsize=20)
-pyp.xlabel(r'$T_1$',fontsize=24);
-pyp.scatter(Tf1[:, 0], Tf1[:, 1], color = 'w', s = 10, marker = '+')
-pyp.scatter(Tf2[:, 0], Tf2[:, 1], color = 'r', s = 10, marker = '+')
-pyp.scatter(Tf3[:, 0], Tf3[:, 1], color = 'r', s = 10, marker = '+')
-pyp.scatter(Tf4[:, 0], Tf4[:, 1], color = 'g', s = 10, marker = '+')
-pyp.xticks([320, 340, 360, 380, 400, 420]);
-pyp.ylabel(r'$T_1$',fontsize=24);
-pyp.yticks([320, 340, 360, 380, 400, 420]);
-pyp.xlim((303, 423)); pyp.ylim((303, 423));
-ax3D1.tick_params(axis='both',which='major',labelsize=20);
-# pyp.savefig('REF_MOD_PARTS.png', dpi=300,edgecolor='white', bbox_inches='tight', pad_inches=0.1)
+## GENERTATE FIGURES
+# Convergence plots
+REACOPTIM.plots('R1')
+REACOPTIM.plotstime('R1')
+REACOPTIM.plotexptime('R1')
