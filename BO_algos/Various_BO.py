@@ -700,6 +700,12 @@ class BO():
         xnxts = np.array([res.x for res in opt], dtype = 'float')
         funs = np.array([np.atleast_1d(res.fun)[0] for res in opt])
         xnxt[0] = xnxts[np.argmin(funs)]
+        def LCB_nmc(x, LCB_fant, ys):
+                af = 0
+                for j in range(ys.shape[0]):
+                    af += LCB_fant[str(j+1)].LCB(x)
+                af = af/(j+1)
+                return af
         for i in range(1, spltnmc):
             xs = xnxt[:i]
             ys = modelnmc.sample_y(xs, n_samples = samp_num, random_state = np.random.randint(0, 1e6))
@@ -714,12 +720,6 @@ class BO():
                                             n_restarts_optimizer = 10)
                 fant_mod[str(j+1)].fit(x_f, y_f)
                 LCB_fant[str(j+1)] = LCB_AF(fant_mod[str(j+1)], self.dim, self.exp_w, self.descale)
-            def LCB_nmc(x, LCB_fant, ys):
-                af = 0
-                for j in range(ys.shape[0]):
-                    af += LCB_fant[str(j+1)].LCB(x)
-                af = af/(j+1)
-                return af
             opt = Parallel(n_jobs = afcores)(delayed(minimize)(LCB_nmc, x0 = start_points,
                                                                method = 'L-BFGS-B',
                                                                bounds = self.bounds,
