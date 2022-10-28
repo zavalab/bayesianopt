@@ -96,7 +96,6 @@ class BO():
                     self.dist_ref['distrefmod'+str(i-2)] = aux_mods['ref_distmod'+str(i-2)]
                 self.dist_ref = OrderedDict(self.dist_ref)
                     
-
     def descale(self, x, scaling_factor = 1):
         m = (self.ub-self.lb)/scaling_factor
         b = self.lb
