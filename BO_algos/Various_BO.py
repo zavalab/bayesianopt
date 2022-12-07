@@ -9,6 +9,10 @@ import torch
 import time
 
 class LCB_AF():
+    """
+    Lower Confidence Bound acquisition function capable
+    of operating with and without a reference model
+    """
     def __init__(self, model, dim, exp_w, descale, **refmod):
         self.model = model
         self.dim = dim
@@ -30,8 +34,36 @@ class LCB_AF():
         else:
             yref = self.refmod(self.descale(x))
         return (yref+mu-self.exp_w*std).flatten()
+    
+class qLCB():
+    """
+    Multipoint LCB acquisition function
+    """
+    def __init__(self, model, q, dim, exp_w, samps):
+        self.model = model
+        self.q = q
+        self.dim = dim
+        self.exp_w = exp_w
+        self.n = samps
+    def LCB(self, x):
+        x = x.reshape(self.q, self.dim)
+        if np.unique(np.round(x, 4), axis = 0).shape[0]<self.q:
+            return np.max(self.model.predict(x))
+        else:
+            mu, Sigma = self.model.predict(x, return_cov = True)
+            L = np.linalg.cholesky(Sigma)
+            S = 0
+            for i in range(self.n):
+                z = np.random.normal(np.zeros(mu.shape), np.ones(mu.shape), mu.shape)
+                s = mu-self.exp_w*np.abs(L@z)
+                S += np.min(s)
+            S = S/(self.n)
+            return S
 
 class LCB_EMBD():
+    """
+    Work in progress
+    """
     def __init__(self, model, var_num, dim, exp_w, fun, descale, include_x, **refmod):
         self.model = model
         self.var_num = var_num
@@ -107,6 +139,10 @@ class BO():
         return m*x+b
     
     def optimizergp(self, trials, scaling_factor, cores = 4, xinit = None):
+        """
+        Standard Bayesian optimization algorithm run using the LCB acquisition function.
+        The 'cores' argument sets the number of cores that will be used for AF optimization
+        """
         print('Vanilla BO Run...')
         start = time.time()
         self.trialsgp = trials
@@ -163,9 +199,16 @@ class BO():
         self.hyp_optim = False
         self.expwl_optim = False
         self.nmc_optim = False
+        self.qBO_optim = False
         self.embd_optim = False
         
     def optimizeref(self, trials, scaling_factor, cores = 4, xinit = None):
+        """
+        BO with a reference model algorithm as described in Q. Lu et al. The 
+        reference model is introduced as an entry in the **aux_mods dictionary
+        with the key 'refmod'. The 'cores' argument sets the number of cores
+        that will be used for AF optimization
+        """
         print('BO with Reference Model Run...')
         start = time.time()
         self.trialsref = trials
@@ -229,10 +272,13 @@ class BO():
         
     def optimizersplt(self, trials, partition_num, partition_cons, scaling_factor, fcores = 4, afcores = 4, xinit = None):
         """
-        partition_cons should be a dictionary of constraints numerically
-        indexed and contained in lists that set up the partitions of the
-        feature space according to whatever partition shape is desired;
-        bounds can be linear or nonlinear
+        LS-BO approach developed by us and explained in González, L.D. et al. partition_cons
+        should be a dictionary of constraints numerically indexed and contained in lists that
+        set up the level-set partitions of the feature space according to whatever partition
+        shape is desired; bounds can be linear or nonlinear; base these off reference model
+        In this function, reference model is not used to guide the search as in the following.
+        The 'fcores' argument sets the number of cores used for parallel experimentation, and
+        the 'afcores' argument sets the cores used for optimizing the AF
         """
         print('Partitioned Domain BO Run...')
         start = time.time()
@@ -347,10 +393,12 @@ class BO():
     
     def optimizerspltref(self, trials, partition_num, partition_cons, scaling_factor, fcores = 4, afcores = 4, xinit = None):
         """
-        partition_cons should be a dictionary of constraints numerically
-        indexed and contained in lists that set up the partitions of the
-        feature space according to whatever partition shape is desired;
-        bounds can be linear or nonlinear; base these off reference model
+        LS-BO approach developed by us and explained in González, L.D. et al. partition_cons
+        should be a dictionary of constraints numerically indexed and contained in lists that
+        set up the level-set partitions of the feature space according to whatever partition
+        shape is desired; bounds can be linear or nonlinear; base these off reference model.
+        The 'fcores' argument sets the number of cores used for parallel experimentation,
+        and the 'afcores' argument sets the cores used for optimizing the AF
         """
         print('Partitioned Domain with Reference Model BO Run...')
         start = time.time()
@@ -484,9 +532,11 @@ class BO():
     
     def hyperspace(self, trials, partition_num, partition_cons, scaling_factor, fcores = 4, afcores = 4, xinit = None):
         """
-        parallelization of BO based on HyperSpace algorithm as described in
-        literature; overlap parameter is based using constraints and each
-        partition (hyperspace) is optimized using its own model
+        parallelization of BO based on HyperSpace algorithm as described by
+        M.T. Young, et al.; overlap parameter is implemented using constraints
+        and each partition (hyperspace) is optimized using its own model. The
+        'fcores' argument sets the number of cores used for parallel experimentation,
+        and the 'afcores' argument sets the cores used for optimizing the AF
         """
         print('Hyperspace Run...')
         start = time.time()
@@ -590,6 +640,14 @@ class BO():
         self.yhypbst = ybst
     
     def optimizerexpw(self, trials, num_weights, scaling_factor, fcores, afcores, xinit = None):
+        """"
+        Parallelization of BO based on variation of the exploration 
+        parameter as described by F. Hutter, et al. Selection is done
+        by sampling from exponential distribution with \lambda = 1. The
+        'fcores' argument sets the number of cores used for parallel
+        experimentation, and the 'afcores' argument sets the cores used
+        for optimizing the AF
+        """
         print('Variable κ BO Run...')
         start = time.time()
         self.trialsexpw = trials
@@ -660,8 +718,11 @@ class BO():
     
     def optimizernmc(self, trials, parallel_num, sample_num, scaling_factor, fcores = 4, afcores = 4, xinit = None):
         """
-        parallelization of BO based on N times Monte Carlo algorithm as described
-        in literature; parallel_num is number of parallel sample points desired
+        parallelization of BO based on N times Monte Carlo algorithm as described by
+        J. Snoek, et al.; parallel_num is number of parallel sample points desired, 
+        and samp_num is the number of samples taken for Monte Carlo estimate. The
+        'fcores' argument sets the number of cores used for parallel experimentation,
+        and the 'afcores' argument sets the cores used for optimizing the AF
         """
         print('N times MC BO Run...')
         start = time.time()
@@ -778,8 +839,106 @@ class BO():
         self.modelnmc = modelnmc
         self.ybstnmc = ybst
     
+    def optimizerqBO(self, trials, q, samps, scaling_factor, fcores = 1, afcores = 1, xinit = None):
+        """
+        Parallelization of BO based on the multi-point UCB/LCB expression
+        found in J.T. Wilson, et al. The batch size is set by q and samp
+        is the number of samples used by the Monte Carlo estimate. The
+        'fcores' argument sets the number of cores used for parallel
+        experimentation, and the 'afcores' argument sets the cores used
+        for optimizing the AF
+        """
+        print('q-BO Run...')
+        start = time.time()
+        self.trialsqBO = trials
+        self.q = q
+        self.timeqBO = np.ones(self.trialsqBO+1)
+        self.timefqBO = np.ones(self.trialsqBO+1)
+        self.n = samps
+        sf = scaling_factor
+        if xinit is None:
+            x = np.random.uniform(0, sf, (self.q, self.dim))
+        else:
+            x = xinit.reshape(-1, 1)
+            rw = int(x.shape[0]/self.dim)
+            x = xinit.reshape(rw, self.dim)
+            if x.shape[0]<self.q:
+                x = np.vstack([x, np.random.uniform(0, sf, (self.q-x.shape[0], self.dim))])
+        splt = int(x.shape[0]/fcores)
+        xbs = np.array(np.ones(fcores), dtype = tuple)
+        if fcores == 1:
+            xbs[0] = x
+        else:
+            for i in range(fcores-1):
+                xbs[i] = x[i*splt:(i+1)*splt, :]
+            xbs[-1] = x[(i+1)*splt:, :]
+        startf = time.time()
+        y = Parallel(n_jobs = fcores)(delayed(self.system)(self.descale(start_point)) for start_point in xbs)
+        endf = time.time()
+        self.timefqBO[0] = endf-startf
+        y = np.hstack(y[:]).T.reshape(-1,1)
+        ybst = min(y).reshape(-1,1)
+        modelqBO = gpr.GaussianProcessRegressor(self.kernel, alpha = 1e-6, 
+                                                normalize_y = True,
+                                                n_restarts_optimizer = 10)
+        modelqBO.fit(x, y)
+        init_pts = max(1, int(round(128/self.q, 0)))
+        x0 = np.random.uniform(0, sf, (init_pts, self.dim*self.q))
+        bndsqBO = Bounds(np.zeros((self.q*self.dim)), np.ones((self.q*self.dim)))
+        LCBqBO = qLCB(modelqBO, self.q, self.dim, self.exp_w, self.n).LCB
+        opt = Parallel(n_jobs = afcores)(delayed(minimize)(LCBqBO, x0 = start_point,
+                                                  method = 'L-BFGS-B',
+                                                  bounds = bndsqBO)
+                                for start_point in x0)
+        xnxts = np.array([res.x for res in opt], dtype  = 'float')
+        funs = np.array([np.atleast_1d(res.fun)[0] for res in opt])
+        xnxt = xnxts[np.argmin(funs)].reshape(self.q, self.dim)
+        xnxtbs = np.array(np.ones(fcores), dtype = tuple)
+        end = time.time()
+        self.timeqBO[0] = end-start
+        for i in range(self.trialsqBO):
+            if fcores == 1:
+                xnxtbs[0] = xnxt
+            else:
+                for j in range(fcores-1):
+                    xnxtbs[j] = xnxt[j*splt:(j+1)*splt, :]
+                xnxtbs[-1] = xnxt[(j+1)*splt:, :]
+            startf = time.time()
+            ynxt = Parallel(n_jobs = fcores)(delayed(self.system)(self.descale(start_point)) for start_point in xnxtbs)
+            endf = time.time()
+            self.timefqBO[i+1] = self.timefqBO[i]+(endf-startf)
+            ynxt = np.hstack(ynxt[:]).T.reshape(-1,1)
+            x = np.vstack([x, xnxt])
+            y = np.vstack([y, ynxt])
+            ybst = np.vstack([ybst, min(ynxt).reshape(-1, 1)])
+            modelqBO.fit(x, y)
+            x0 = np.random.uniform(0, sf, (init_pts, self.dim*self.q))
+            opt = Parallel(n_jobs = afcores)(delayed(minimize)(LCBqBO, x0 = start_point,
+                                                               method = 'L-BFGS-B',
+                                                               bounds = bndsqBO)
+                                             for start_point in x0)
+            xnxts = np.array([res.x for res in opt], dtype  = 'float')
+            funs = np.array([np.atleast_1d(res.fun)[0] for res in opt])
+            xnxt = xnxts[np.argmin(funs)].reshape(self.q, self.dim)
+            end = time.time()
+            self.timeqBO[i+1] = end-start
+        self.qBO_optim = True
+        self.modelqBO = modelqBO
+        self.xqBO = self.descale(x)
+        self.yqBO = y
+        self.ybstqBO = ybst
+    
     def optimizerspltvar(self, trials, split_num, liminit, scaling_factor, fcores, afcores, xinit  = None):
-        # Split partition using variables as split point
+        """
+        VP-BO approach developed by us and detailed in González, L.D. et al. The partitions are
+        made using the 'split_num' argument; this sets the number of blocks that the variables
+        are split into. The 'liminit' argument sets the initial value for the x_{-k} variables.
+        Note that when introducing the design variables, x, they should be ordered by subsystem.
+        For example if d = 4, and split_num = 2, introducing x = (x_a, x_b, x_c, x_d) will set
+        x_1 = (x_a, x_b) and x_{-1}] = (x_c, x_d), and x_2 = (x_c, x_d) and x_{-2} = (x_a, x_b).
+        The 'fcores' argument sets the number of cores used for parallel experimentation, and
+        the 'afcores' argument sets the cores used for optimizing the AF
+        """
         print('Partitioned Variables BO Run...')
         start = time.time()
         self.trialspltvar = trials
@@ -899,6 +1058,9 @@ class BO():
         self.yspltvarbst = ybst
         
     def optimizerembd(self, trials, var_num, include_x, fun, scaling_factor, fcores, afcores, xinit = None):
+        """
+        Work in Progress
+        """
         print('Embedded function BO Run...')
         start = time.time()
         self.trialsembd = trials
@@ -1024,6 +1186,13 @@ class BO():
             ax1.plot(itr, self.ybstnmc, color = 'pink', linewidth = 3, label = 'MC-BO');
             yliml = min(yliml, min(self.ybstnmc)-0.01*abs(min(self.ybstnmc)))
             ylimu = max(ylimu, max(self.ybstnmc)+0.01*abs(max(self.ybstnmc)))
+        if self.qBO_optim:
+            itr = np.arange(1, self.trialsqBO+2, 1)
+            ax1.scatter(itr, self.ybstqBO, marker = 'o', color = 'white', edgecolor = 'gold',
+                    zorder = 3, s = 200);
+            ax1.plot(itr, self.ybstqBO, color = 'gold', linewidth = 3, label = 'q-BO');
+            yliml = min(yliml, min(self.ybstqBO)-0.01*abs(min(self.ybstqBO)))
+            ylimu = max(ylimu, max(self.ybstqBO)+0.01*abs(max(self.ybstqBO)))
         if self.embd_optim:
             itr = np.arange(1, self.trialsembd+2, 1)
             ax1.scatter(itr, self.fembd, marker = 'o', color = 'white', edgecolor = 'lime',
@@ -1101,6 +1270,13 @@ class BO():
             yliml = min(yliml, min(self.ybstnmc)-0.01*abs(min(self.ybstnmc)))
             ylimu = max(ylimu, max(self.ybstnmc)+0.01*abs(max(self.ybstnmc)))
             xlimu = max(xlimu, self.timenmc[-1]+1)
+        if self.qBO_optim:
+            ax1.scatter(self.timeqBO, self.ybstqBO, marker = 'o', color = 'white', edgecolor = 'gold',
+                    zorder = 3, s = 200);
+            ax1.plot(self.timeqBO, self.ybstqBO, color = 'gold', linewidth = 3, label = 'q-BO');
+            yliml = min(yliml, min(self.ybstqBO)-0.01*abs(min(self.ybstqBO)))
+            ylimu = max(ylimu, max(self.ybstqBO)+0.01*abs(max(self.ybstqBO)))
+            xlimu = max(xlimu, self.timeqBO[-1]+1)
         if self.embd_optim:
             ax1.scatter(self.timembd, self.fembd, marker = 'o', color = 'white', edgecolor = 'lime',
                         zorder = 3, s = 200);
@@ -1179,6 +1355,13 @@ class BO():
             yliml = min(yliml, min(self.ybstnmc)-0.01*abs(min(self.ybstnmc)))
             ylimu = max(ylimu, max(self.ybstnmc)+0.01*abs(max(self.ybstnmc)))
             xlimu = max(xlimu, self.timefnmc[-1]+1)
+        if self.qBO_optim:
+            ax1.scatter(self.timefqBO, self.ybstqBO, marker = 'o', color = 'white', edgecolor = 'gold',
+                    zorder = 3, s = 200);
+            ax1.plot(self.timefqBO, self.ybstqBO, color = 'gold', linewidth = 3, label = 'q-BO');
+            yliml = min(yliml, min(self.ybstqBO)-0.01*abs(min(self.ybstqBO)))
+            ylimu = max(ylimu, max(self.ybstqBO)+0.01*abs(max(self.ybstqBO)))
+            xlimu = max(xlimu, self.timefqBO[-1]+1)
         if self.embd_optim:
             ax1.scatter(self.timefembd, self.fembd, marker = 'o', color = 'white', edgecolor = 'lime',
                         zorder = 3, s = 200);
