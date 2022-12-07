@@ -123,6 +123,34 @@ for i in range(blks**2):
         lwry = lwry-(1/blks)
         upry = upry-(1/blks)
 # Learning the bounds (using GP we already made)
+# LS-BO
+opt = Parallel(n_jobs = 5)(delayed(minimize)(SYST_C_REFGP, T0, bounds = bnds,
+                                             method = 'L-BFGS-B') for T0 in Tmod)
+Tsol = np.array([res.x for res in opt], dtype = 'float')
+Ctsol = np.array([np.atleast_1d(res.fun)[0] for res in opt])
+m = (Tsol[0, 1]-Tsol[7, 1])/(Tsol[0, 0]-Tsol[7, 0])
+b = -m*Tsol[0, 0]+Tsol[0, 1]
+Tx = np.linspace(int(Tsol[0, 0]), int(Tsol[7, 0]), 72)
+Ty = m*Tx+b
+Txy = np.hstack([Tx.reshape(-1, 1), Ty.reshape(-1, 1)])
+D = np.linalg.norm(Tsol[7]-Txy, ord = 2, axis = 1)
+Ctxy = SYST_C_REFGP(Txy)
+
+fig, ax1 = pyp.subplots(1, 1, figsize=(11, 8.5))
+ax1.grid(color='gray', axis='both', alpha = 0.25)
+ax1.set_axisbelow(True)
+ax1.set_xlabel(r'Euclidian distance from $(T_1^{\ast}, T_2^{\ast})$',
+               fontsize = 24)
+pyp.xticks(fontsize = 24)
+ax1.set_ylabel(r'$\hat{g}(T_1, T_2)$', fontsize = 24)
+pyp.yticks(fontsize = 24);
+pyp.scatter(D, Ctxy, color = 'b', 
+            edgecolor = 'w', s = 200, zorder = 3)
+pyp.plot([0, int(max(D))+1], [-383, -383], 'k--', linewidth = 3)
+pyp.plot([0, int(max(D))+1], [-461, -461], 'r--', linewidth = 3)
+pyp.xlim((0, int(max(D))+1))
+pyp.savefig('LS_Dist.png', dpi=300,edgecolor='white', bbox_inches='tight', pad_inches=0.1)
+
 gpparts = gpr.GaussianProcessRegressor(kergp, alpha = 1e-6, n_restarts_optimizer = 10,
                                        normalize_y = True)
 gpparts.fit(scale(Tmod), (CTREF[:, -1]).reshape(-1, 1))
@@ -188,6 +216,11 @@ PARAMSNMC = np.ones(x0.shape)
 DISTNMC = np.array([]).reshape(0, dim)
 RESNMC = np.ones((METNMC.shape[0], x0.shape[0]))
 
+METQBO = np.zeros((25, 4))
+PARAMSQBO = np.ones(x0.shape)
+DISTQBO = np.array([]).reshape(0, dim)
+RESQBO = np.ones((METQBO.shape[0], x0.shape[0]))
+
 for i in range(x0.shape[0]):
     start = time.time()
     REACOPTIM.optimizergp(99, 1, cores = 1, xinit = x0[i])
@@ -220,7 +253,7 @@ for i in range(x0.shape[0]):
     METREF[:, 1] = METREF[:, 1]+REACOPTIM.timefref.flatten()
     METREF[:, 2] = METREF[:, 2]+REACOPTIM.ytru.flatten()
     METREF[:, 3] = METREF[:, 3]+np.min(REACOPTIM.ytru)
-    print('Best ref value is '+str(np.min(METREF[:, 3])/(i+1)))
+    print('Best ref value is '+str(np.min(REACOPTIM.ytru)))
     PARAMSREF[i] = REACOPTIM.xref[np.argmin(REACOPTIM.ytru)]
     DISTREF = np.vstack([DISTREF, REACOPTIM.xref])
     RESREF[:, i] = REACOPTIM.ytru[:, 0]
@@ -401,7 +434,7 @@ for i in range(x0.shape[0]):
     METNMC[:, 1] = METNMC[:, 1]+REACOPTIM.timefnmc.flatten()
     METNMC[:, 2] = METNMC[:, 2]+REACOPTIM.ybstnmc.flatten()
     METNMC[:, 3] = METNMC[:, 3]+np.min(REACOPTIM.ybstnmc)
-    print('Best NxMCMC value is '+str(np.min(METNMC[:, 3])/(i+1)))
+    print('Best NxMCMC value is '+str(np.min(REACOPTIM.ybstnmc)))
     PARAMSNMC[i] = REACOPTIM.xnmc[np.argmin(REACOPTIM.ynmc)]
     DISTNMC = np.vstack([DISTNMC, REACOPTIM.xnmc])
     RESNMC[:, i] = REACOPTIM.ybstnmc[:, 0]
@@ -412,6 +445,28 @@ METNMC[:, 3] = METNMC[:, 3]/(i+1)
 REACOPTIM.ybstnmc = METNMC[:, 2].flatten()
 REACOPTIM.timenmc = METNMC[:, 0].flatten()
 REACOPTIM.timefnmc = METNMC[:, 1].flatten()
+
+for i in range(x0.shape[0]):
+    start = time.time()
+    REACOPTIM.optimizerqBO(24, 4, 20, 1, fcores = 4, afcores = 1, xinit = x0[i])
+    end = time.time()
+    print('Run time '+str(end-start)+'s')
+    print('iteration '+str(i+1))
+    METQBO[:, 0] = METQBO[:, 0]+REACOPTIM.timeqBO.flatten()
+    METQBO[:, 1] = METQBO[:, 1]+REACOPTIM.timefqBO.flatten()
+    METQBO[:, 2] = METQBO[:, 2]+REACOPTIM.ybstqBO.flatten()
+    METQBO[:, 3] = METQBO[:, 3]+np.min(REACOPTIM.ybstqBO)
+    print('Best q-BO value is '+str(np.min(REACOPTIM.ybstqBO)))
+    PARAMSQBO[i] = REACOPTIM.xqBO[np.argmin(REACOPTIM.yqBO)]
+    DISTQBO = np.vstack([DISTQBO, REACOPTIM.xqBO])
+    RESQBO[:, i] = REACOPTIM.ybstqBO[:, 0]
+METQBO[:, 0] = METQBO[:, 0]/(i+1)
+METQBO[:, 1] = METQBO[:, 1]/(i+1)
+METQBO[:, 2] = METQBO[:, 2]/(i+1)
+METQBO[:, 3] = METQBO[:, 3]/(i+1)
+REACOPTIM.ybstqBO = METQBO[:, 2].flatten()
+REACOPTIM.timeqBO = METQBO[:, 0].flatten()
+REACOPTIM.timefqBO = METQBO[:, 1].flatten()
 
 ## GENERTATE FIGURES
 # Convergence plots
