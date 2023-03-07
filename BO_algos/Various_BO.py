@@ -390,36 +390,65 @@ class BO():
         self.xsplt = self.descale(x)
         self.ysplt = y
         self.yspltbst = ybst
-    
-    def optimizerspltref(self, trials, partition_num, partition_cons, scaling_factor, fcores = 4, afcores = 4, xinit = None):
+
+    def optimizerspltref(self, trials, partition_number, repartition_intervals,
+                         x_samps, fcores, afcores, scaling_factor = 1,
+                         partition_constraints = None, xinit = None):
         """
-        LS-BO approach developed by us and explained in González, L.D. et al. partition_cons
-        should be a dictionary of constraints numerically indexed and contained in lists that
-        set up the level-set partitions of the feature space according to whatever partition
-        shape is desired; bounds can be linear or nonlinear; base these off reference model.
-        The 'fcores' argument sets the number of cores used for parallel experimentation,
-        and the 'afcores' argument sets the cores used for optimizing the AF
+        > partition_number is the number of desired partitions
+        
+        > repartition_intervals is the iteration at which repartitioning is done,
+          if repartitioning is not wanted, enter empty list '[]'
+        
+        > fcores and afcores are the cores used for sampling f and optimizing the AF
+        
+        > x_samps contains the points at which samples of \hat{f} are collected
+          during repartitioning in order to determine the median, if repartitioning
+          is not desired, enter empty array, 'np.array([])', or list, '[]'
+          
+        > scaling factor sets the size of the 'box' that the input space is scaled
+          down to; by default set to scale to unit interval [0, 1]
+        
+        > partition_constraints should be a numerically indexed dictionary with
+          each entry containing a list of the constraints (linear or nonlinear)
+          required to set up the desired space partition
+         
+        > xinit is an array containing the intial points at which to sample
         """
         print('Partitioned Domain with Reference Model BO Run...')
         start = time.time()
         self.trialspltref = trials
-        self.splitref = partition_num
-        self.consref = partition_cons
+        splitref = partition_number
+        self.reparts = repartition_intervals
+        self.x_s = x_samps
+        sf = scaling_factor
+        self.consref = partition_constraints
         self.timespltref = np.ones(self.trialspltref+1)
         self.timefspltref = np.ones(self.trialspltref+1)
-        sf = scaling_factor
         x = np.array([]).reshape(0, self.dim)
         refmod = self.refmod['refmod']
         switch = True
+        modelsplteps = gpr.GaussianProcessRegressor(self.kernel, alpha = 1e-6,
+                                                 n_restarts_optimizer = 10,
+                                                 normalize_y = True)
+        cons_fun = lambda x: refmod(self.descale(x))+modelsplteps.predict(x.reshape(1, 2))
         def intpts(x, i):
             l = str(i+1)
-            for j in range(len(self.consref[l])):
-                if self.consref[l][j].lb < self.consref[l][j].fun(x) < self.consref[l][j].ub:
-                    res = 0
+            res = 0
+            for j in self.consref[l]:
+                if j.lb < j.fun(x) < j.ub:
+                    res+=0
                 else:
-                    res = 1e6
+                    res+=1e6
             return res
-        for i in range(self.splitref):
+        if self.consref is None:
+            self.consref = {}
+            y_s = refmod(self.x_s)
+            delta = np.linspace(np.min(y_s), np.max(y_s), splitref+1)
+            self.consref['1'] = [NonlinearConstraint(cons_fun, -np.inf, delta[1])]
+            for i in range(1, splitref):
+                self.consref[str(i+1)] = [NonlinearConstraint(cons_fun, delta[i], delta[i+1])]
+        for i in range(splitref):
             n = 0
             if xinit is not None and switch == True:
                 for j in range(len(self.consref[str(i+1)])):    
@@ -429,7 +458,7 @@ class BO():
                 if n == len(self.consref[str(i+1)]):
                     x0 = xinit.reshape(1, self.dim)
                     switch = False
-            if n!=len(self.consref[str(i+1)]):
+            if n != len(self.consref[str(i+1)]):
                 x0 = np.random.uniform(0, sf, (10, self.dim))
                 opt = Parallel(n_jobs = 1)(delayed(minimize)(intpts, x0 = x, args = (i,),
                                                              method = 'SLSQP',
@@ -462,15 +491,13 @@ class BO():
         eps = y-yref
         ybst = min(y).reshape(-1,1)
         self.timefspltref[0] = endf-startf
-        modelsplteps = gpr.GaussianProcessRegressor(self.kernel, alpha = 1e-6,
-                                                 n_restarts_optimizer = 10,
-                                                 normalize_y = True)
         modelsplteps.fit(x, eps)
-        xnxt = np.ones((self.splitref, self.dim))
+        xnxt = np.ones((splitref, self.dim))
         LCB = LCB_AF(modelsplteps, self.dim, self.exp_w, self.descale, **self.refmod).LCB
-        init_pts = max(1, int(round(128/self.splitref, 0)))
+        init_pts = max(1, int(round(128/splitref, 0)))
         x0 = np.random.uniform(0, sf, (init_pts, self.dim))
-        for i in range(self.splitref):
+        for i in range(splitref):
+            x0 = np.random.uniform(-sf, sf, (100, self.dim))
             opt = Parallel(n_jobs = afcores)(delayed(minimize)(LCB, x0 = start_points,
                                                           method = 'SLSQP',
                                                           bounds = self.bounds, tol = 1e-6,
@@ -484,6 +511,7 @@ class BO():
         xnxtbs = np.array(np.ones(fcores), dtype = tuple)
         end = time.time()
         self.timespltref[0] = end-start
+        J = 0
         for i in range(self.trialspltref):
             if fcores == 1:
                 xnxtbs[0] = xnxt
@@ -493,7 +521,7 @@ class BO():
                 xnxtbs[-1] = xnxt[(j+1)*splt:, :]
             startf = time.time()
             ynxt =  Parallel(n_jobs = fcores)(delayed(self.system)(self.descale(start_point)) for start_point in xnxtbs)
-            if str(type(refmod))=="<class '__main__.Network'>":
+            if str(type(refmod)) == "<class '__main__.Network'>":
                 yref = Parallel(n_jobs = fcores)(delayed(refmod)(start_point) for start_point in torch.from_numpy(xnxt).float())
                 endf = time.time()
                 yref = torch.hstack(yref[:]).T.reshape(-1, 1).data.numpy()
@@ -509,8 +537,20 @@ class BO():
             eps = np.vstack([eps, epsnxt])
             ybst = np.vstack([ybst, min(ynxt).reshape(-1, 1)])
             modelsplteps.fit(x, eps)
+            if i+2 in self.reparts:
+                J+=1
+                y_s = refmod(self.x_s)+modelsplteps.predict(self.scale(self.x_s))
+                med = np.median(y_s)
+                for j in range(J):
+                    idx = np.where(y_s <= med)
+                    y_s = y_s[idx]
+                    med = np.median(y_s)
+                delta = np.linspace(np.min(y_s), np.max(y_s), splitref+1)
+                self.consref['1'] = [NonlinearConstraint(cons_fun, -np.inf, delta[1])]
+                for j in range(1, splitref):
+                    self.consref[str(j+1)] = [NonlinearConstraint(cons_fun, delta[j], delta[j+1])]
             x0 = np.random.uniform(0, sf, (init_pts, self.dim))
-            for j in range(self.splitref):
+            for j in range(splitref):
                 opt = Parallel(n_jobs = afcores)(delayed(minimize)(LCB, x0 = start_points,
                                                               method = 'SLSQP',
                                                               bounds = self.bounds, tol = 1e-6,
