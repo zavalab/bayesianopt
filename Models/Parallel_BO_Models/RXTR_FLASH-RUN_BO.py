@@ -1,15 +1,15 @@
 import numpy as np
 from scipy.optimize import Bounds, NonlinearConstraint
 import sklearn.gaussian_process as gpr
-import Various_BO
+import RECYL_SYST_MODS4
 import time
 import warnings
 from sklearn.exceptions import ConvergenceWarning
 from joblib import Parallel, delayed
 from matplotlib import pyplot as pyp, cm
 import sys
-sys.path.append('./Toy-Reactors')
-import RECYL_SYST_MODS4
+sys.path.append('./../../BO_algos/Parallel_algos')
+import Various_BO
 # Disable Covergence and Runtime warnings that arise during BO runs due to parameter bounds
 warnings.simplefilter('ignore', RuntimeWarning)
 warnings.simplefilter('ignore', ConvergenceWarning)
