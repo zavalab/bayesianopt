@@ -381,16 +381,20 @@ def SYSTEM_DIST_YEAR(x, n_feed, M):
     eta_C = np.ones((len(x), len(n_feed)))
     m_ngRX1 = np.ones((len(x), len(n_feed)))
     m_watFL1 = np.ones((len(x), len(n_feed)))
-
-    for j, n in enumerate(n_feed):
-        b, a, c, d, e = SYSTEM_DIST(x, n, M)
-        
-        eta_B[:, j] = b.flatten()
-        eta_A[:, j] = a.flatten()
-        eta_C[:, j] = c.flatten()
-        m_ngRX1[:, j] = d.flatten()
-        m_watFL1[:, j] = e.flatten()
-        
+    
+    
+    for i, x_s in enumerate(x):
+        for j, n in enumerate(n_feed):
+            b, a, c, d, e = SYSTEM_DIST(x_s, n, M)
+            
+            print(b.shape)
+            print(eta_B.shape)
+            eta_B[i, j] = b.flatten()
+            eta_A[i, j] = a.flatten()
+            eta_C[i, j] = c.flatten()
+            m_ngRX1[i, j] = d.flatten()
+            m_watFL1[i, j] = e.flatten()
+            
     eta_B = np.mean(eta_B, axis = 1)
     eta_A = np.mean(eta_A, axis = 1)
     eta_C = np.mean(eta_C, axis = 1)
