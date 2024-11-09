@@ -387,8 +387,6 @@ def SYSTEM_DIST_YEAR(x, n_feed, M):
         for j, n in enumerate(n_feed):
             b, a, c, d, e = SYSTEM_DIST(x_s, n, M)
             
-            print(b.shape)
-            print(eta_B.shape)
             eta_B[i, j] = b.flatten()
             eta_A[i, j] = a.flatten()
             eta_C[i, j] = c.flatten()
