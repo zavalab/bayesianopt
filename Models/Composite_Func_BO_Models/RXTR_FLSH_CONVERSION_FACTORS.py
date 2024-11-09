@@ -269,6 +269,22 @@ def SYSTEM_BO(x, p, n_feed, M):
     return y[:, 0].flatten()
 
 
+def SYSTEM_BO_YEAR(x, p, n_feed, M):
+    if len(x.shape) == 1:
+        x = x.reshape(1, -1)
+        
+    if len(n_feed.shape) == 1:
+        n_feed = n_feed.reshape(1, -1)
+    
+    y = np.ones((len(x), len(n_feed)))
+
+    for j, n in enumerate(n_feed):
+        y[:, j] = SYSTEM_BO(x, p, n, M)
+        
+    y = np.mean(y, axis = 1)
+    return y.flatten()
+
+
 def SYSTEM_DIST(x, n_feed, M):
     if len(x.shape) == 1:
         x = x.reshape(-1, 1).T
@@ -352,6 +368,37 @@ def SYSTEM_DIST(x, n_feed, M):
     return np.array([eta[0]]).reshape(-1, 1), np.array([eta[1]]).reshape(-1, 1),\
            np.array([eta[2]]).reshape(-1, 1), np.array([m_ngRX1]), np.array([m_watFL1/1e3])
 
+
+def SYSTEM_DIST_YEAR(x, n_feed, M):
+    if len(x.shape) == 1:
+        x = x.reshape(1, -1)
+        
+    if len(n_feed.shape) == 1:
+        n_feed = n_feed.reshape(1, -1)
+    
+    eta_B = np.ones((len(x), len(n_feed)))
+    eta_A = np.ones((len(x), len(n_feed)))
+    eta_C = np.ones((len(x), len(n_feed)))
+    m_ngRX1 = np.ones((len(x), len(n_feed)))
+    m_watFL1 = np.ones((len(x), len(n_feed)))
+
+    for j, n in enumerate(n_feed):
+        b, a, c, d, e = SYSTEM_DIST(x, n, M)
+        
+        eta_B[:, j] = b.flatten()
+        eta_A[:, j] = a.flatten()
+        eta_C[:, j] = c.flatten()
+        m_ngRX1[:, j] = d.flatten()
+        m_watFL1[:, j] = e.flatten()
+        
+    eta_B = np.mean(eta_B, axis = 1)
+    eta_A = np.mean(eta_A, axis = 1)
+    eta_C = np.mean(eta_C, axis = 1)
+    m_ngRX1 = np.mean(m_ngRX1, axis = 1)
+    m_watFL1 = np.mean(m_watFL1, axis = 1)
+    
+    return eta_B.reshape(-1, 1), eta_A.reshape(-1, 1), eta_C.reshape(-1, 1), m_ngRX1.reshape(-1, 1), m_watFL1.reshape(-1, 1)
+  
 
 #%% BOIS FUNCTIONS
 
@@ -507,6 +554,7 @@ def gp_sim(x, y_mod, mu, sigma, x_idx, y_idx):
 #%% RUN SETUP
 
 n_feed = np.array([1e6, 3e6, 0])
+n_feed_dist = n_feed*np.ones((52, 3))
 p_dict = {}
 p_dict['A'] = p[0]
 p_dict['B'] = p[1]
@@ -524,8 +572,8 @@ kernel = gpr.kernels.Matern(length_scale = np.ones(dim),
                             length_scale_bounds = np.array([[1e-1, 2e1]]*dim),
                             nu = 2.5)
 bounds = Bounds(np.zeros(dim), np.ones(dim))
-args = (p, n_feed, M)
-args_dist = (n_feed, M)
+args = (p, n_feed_dist, M)
+args_dist = (n_feed_dist, M)
 
 idx = [[0, 1, 2, 3, 4],
 
@@ -591,10 +639,10 @@ F_MCBO = np.ones((trials, len(x_init)))
 X_OPBO = np.ones((trials*len(x_init), dim))
 F_OPBO = np.ones((trials, len(x_init)))
 
-RXT_DIST = BO_algos.BO(ub, lb, dim, exp_w[0], kernel, SYSTEM_BO, bounds, args)
+RXT_DIST = BO_algos.BO(ub, lb, dim, exp_w[0], kernel, SYSTEM_BO_YEAR, bounds, args)
 
 for i, x_0 in enumerate(x_init):
-    RXT_DIST.system = SYSTEM_BO
+    RXT_DIST.system = SYSTEM_BO_YEAR
     RXT_DIST.exp_w = exp_w[0]
     RXT_DIST.args = args
     
@@ -605,7 +653,7 @@ for i, x_0 in enumerate(x_init):
     np.savetxt('RXT_FLSH_RCYL_x_sbo.txt', X_SBO)
     np.savetxt('RXT_FLSH_RCYL_f_sbo.txt', F_SBO)
         
-    RXT_DIST.system = SYSTEM_DIST
+    RXT_DIST.system = SYSTEM_DIST_YEAR
     RXT_DIST.exp_w = exp_w
     RXT_DIST.args = args_dist
     
