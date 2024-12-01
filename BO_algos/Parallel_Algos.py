@@ -1061,7 +1061,13 @@ class BO():
                                                               n_restarts_optimizer = 10,
                                                               normalize_y = True)
             model_vp[str(i+1)].fit(x, eps[:, i])
+
+            lwr[i] = x[np.argmin(y[:, i])]
+            lwr[i, i*div:(i+1)*div] = self.bounds.lb[i]
+            upr[i] = x[np.argmin(y[:, i])]+1e-6
+            upr[i, i*div:(i+1)*div] = self.bounds.ub[i]
             bnds_var[str(i+1)] = Bounds(lwr[i], upr[i])
+            
             LCB[str(i+1)] = LCB_AF(model_vp[str(i+1)],
                                    self.dim,
                                    self.exp_w,
