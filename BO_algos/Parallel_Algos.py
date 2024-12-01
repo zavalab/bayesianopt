@@ -1124,17 +1124,18 @@ class BO():
             
             x = np.vstack([x, x_nxt])
             y_nxt = np.vstack(y_nxt[:])
-            y = np.vstack([y, y_nxt])
-            eps_nxt = y_nxt-y_ref
-            eps = np.vstack([eps, eps_nxt])
-            y_bst = np.vstack([y_bst, np.min(y_nxt, axis = 0).reshape(-1,1).T])
-            
+
             for j in range(splits):
                 if any(y_nxt[:, j] < min(y[:, j])):
                     lwr[j] = x_nxt[np.argmin(y_nxt[:, j])]
                     lwr[j, j*div:(j+1)*div] = self.bounds.lb[j]
                     upr[j] = x_nxt[np.argmin(y_nxt[:, j])]+1e-6
                     upr[j, j*div:(j+1)*div] = self.bounds.ub[j]
+                    
+            y = np.vstack([y, y_nxt])
+            eps_nxt = y_nxt-y_ref
+            eps = np.vstack([eps, eps_nxt])
+            y_bst = np.vstack([y_bst, np.min(y_nxt, axis = 0).reshape(-1,1).T])
                 
             for j in range(splits):
                 model_vp[str(j+1)].fit(x, eps[:, j])
