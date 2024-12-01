@@ -1122,7 +1122,6 @@ class BO():
                 end_f = time.time()
             self.time_fvp[i+init_pts] = self.time_fvp[i+init_pts-1]+(end_f-start_f)
             
-            x = np.vstack([x, x_nxt])
             y_nxt = np.vstack(y_nxt[:])
 
             for j in range(splits):
@@ -1132,6 +1131,7 @@ class BO():
                     upr[j] = x_nxt[np.argmin(y_nxt[:, j])]+1e-6
                     upr[j, j*div:(j+1)*div] = self.bounds.ub[j]
                     
+            x = np.vstack([x, x_nxt])
             y = np.vstack([y, y_nxt])
             eps_nxt = y_nxt-y_ref
             eps = np.vstack([eps, eps_nxt])
