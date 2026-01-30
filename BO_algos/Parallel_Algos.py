@@ -541,7 +541,6 @@ class BO():
                                    self.bounds.ub,
                                    (restarts, self.dim))
             
-            start_af = time.time()
             for j in range(splits):
                 if af_solver == 'IPOPT':
                     opt = Parallel(n_jobs = af_cores)(delayed(minimize_ipopt)(LCB.fun,
@@ -567,8 +566,6 @@ class BO():
                 sts = np.array([res.success for res in opt])
                 funs[np.where(sts == False)] = max(1e6, np.max(funs))
                 x_nxt[j] = x_nxts[np.argmin(funs)]
-                end_af = time.time()
-                print(end_af-start_af)
             
             if f_cores == 1:
                 x_nxtbs[0] = x_nxt
