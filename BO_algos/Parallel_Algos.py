@@ -1,65 +1,111 @@
 import numpy as np
 from matplotlib import pyplot as pyp
 from scipy.optimize import minimize, Bounds, NonlinearConstraint
+from cyipopt import minimize_ipopt
+import numdifftools as nd
 from joblib import Parallel, delayed
 import sklearn.gaussian_process as gpr
 from collections import OrderedDict
-import torch
+#import torch
 import time
 
 
 class LCB_AF():
-    def __init__(self, model, dim, exp_w, descale, refmod = None, args = ()):
+    
+    def __init__(self, model, dim, exp_w, descale,
+                 refmod = None, args = (), eps = 1e-3):
         self.model = model
         self.dim = dim
         self.exp_w = exp_w
         self.descale = descale
         self.args = args
+        self.eps = eps
         
         if refmod:
             self.refmod = refmod
+            
         else:
             def zr(x):
                 return 0
+            
             self.refmod = zr
             
-    def LCB(self, x):
-        x = np.array([x]).reshape(-1,1);
+            
+    def fun(self, x):
+        x = np.array([x]).reshape(-1,1)
         x = x.reshape(int(x.shape[0]/self.dim), self.dim)
         
         mu, std = self.model.predict(x, return_std=True);
         mu = mu.flatten()
         
-        if str(type(self.refmod))=="<class '__main__.Network'>":
-            yref = self.refmod(torch.from_numpy(x).float(), *self.args).data.numpy()  
-        else:
-            yref = self.refmod(self.descale(x), *self.args)
+        yref = self.refmod(self.descale(x), *self.args)
             
-        return (yref+mu-self.exp_w*std).flatten()
+        lcb = (yref+mu-self.exp_w*std).flatten()
+        
+        if len(lcb) == 1:
+            lcb = lcb[0]
+            
+        return lcb
+    
+    
+    def grad(self, x):
+        f_prime = nd.Gradient(self.fun, step = self.eps)(x)
+        
+        return f_prime
+    
+    
+    def hess(self, x):
+        f_hess = nd.Hessian(self.fun, step = self.eps)(x)
+        
+        return f_hess
+        
 
 
 class qLCB():
-    def __init__(self, model, q, dim, exp_w, samps):
+    
+    def __init__(self, model, q, dim, exp_w, samps, eps = 1e-3):
         self.model = model
         self.q = q
         self.dim = dim
         self.exp_w = exp_w
         self.n = samps
+        self.eps = eps
+        
     
-    def LCB(self, x):
+    def fun(self, x):
         x = x.reshape(self.q, self.dim)
+        
         if np.unique(np.round(x, 4), axis = 0).shape[0] < self.q:
             return np.max(self.model.predict(x))
+        
         else:
             mu, Sigma = self.model.predict(x, return_cov = True)
             L = np.linalg.cholesky(Sigma)
             S = 0
+            
             for i in range(self.n):
                 z = np.random.normal(np.zeros(mu.shape), np.ones(mu.shape), mu.shape)
                 s = mu-self.exp_w*np.abs(L@z)
                 S += np.min(s)
+                
             S = S/(self.n)
+            
+            if len(S) == 1:
+                S = S[0]
+            
             return S
+        
+        
+        def grad(self, x):
+            f_prime = nd.Gradient(self.fun, step = self.eps)(x)
+            
+            return f_prime
+        
+        
+        def hess(self, x):
+            f_hess = nd.Hessian(self.fun, step = self.eps)(x)
+            
+            return f_hess
 
 
 def hyperspace_partitions(n, phi):
@@ -78,15 +124,19 @@ def hyperspace_partitions(n, phi):
 
 def LCB_nmc(x, LCB_fant, y_s):
     af = 0
+    
     for j in range(y_s.shape[0]):
         af += LCB_fant[str(j+1)].LCB(x)
     af = af/(j+1)
+    
     return af
 
 
 class BO():
-    def __init__(self, ub, lb, dim, exp_w, kernel, system, bounds, args = (),
-                 ref_args = (), shift_exp_w = [], **aux_mods):
+    
+    def __init__(self, ub, lb, dim, exp_w, kernel, system, bounds,
+                 args = (), ref_args = (), shift_exp_w = [], **aux_mods):
+        
         self.ub = ub
         self.lb = lb
         self.dim = dim
@@ -100,12 +150,15 @@ class BO():
         self.dist_ref = {}
         
         if aux_mods:
-            self.refmod = list(aux_mods.values())[0]
+            self.refmod = aux_mods['refmod']
+            
             if len(aux_mods) > 1:
                 self.distmod = aux_mods['distmod']
                 self.dist_ref['distrefmod'] = aux_mods['ref_distmod']
+                
                 for i in range(3,len(aux_mods)):
                     self.dist_ref['distrefmod'+str(i-2)] = aux_mods['ref_distmod'+str(i-2)]
+                    
                 self.dist_ref = OrderedDict(self.dist_ref)
         
         self.refbo_optim = False
@@ -117,24 +170,44 @@ class BO():
         self.vpbo_optim = False
            
          
-    def descale(self, x):
-        m = (self.ub-self.lb)/(self.bounds.ub-self.bounds.lb)
-        b = self.ub-m*self.bounds.ub
+    def descale(self, x,
+                use_self = True,
+                lb = None, ub = None,
+                scale_lb = None, scale_ub = None):
+        
+        if use_self:
+            m = (self.ub-self.lb)/(self.bounds.ub-self.bounds.lb)
+            b = self.ub-m*self.bounds.ub
+            
+        else:
+            m = (ub-lb)/(scale_ub-scale_lb)
+            b = ub-m*scale_ub
+        
         return m*x+b
     
     
-    def scale(self, x, use_self = True, lb = None, ub = None):
+    def scale(self, x,
+              use_self = True,
+              lb = None, ub = None,
+              scale_lb = None, scale_ub = None):
+        
         if use_self:    
             m = (self.bounds.ub-self.bounds.lb)/(self.ub-self.lb)
             b = self.bounds.ub-m*self.ub
+            
         else:
-            m = (self.bounds.ub-self.bounds.lb)/(ub-lb)
-            b = self.bounds.ub-m*ub
+            m = (scale_ub-scale_lb)/(ub-lb)
+            b = scale_ub-m*ub
+            
         return m*x+b
     
     
-    def optimizer_sbo(self, trials, af_cores = 1, x_init = None, init_pts = 1):
-        print('Vanilla BO run...')
+    def optimizer_sbo(self, trials,
+                      x_init = None, init_pts = 1,
+                      af_cores = 1, af_restarts = 128,
+                      af_solver = 'L-BFGS-B', af_solver_options = None):
+        
+        print('Standard BO run...')
         start = time.time()
         self.trials_sbo = trials
         self.time_sbo = np.ones(self.trials_sbo)
@@ -144,6 +217,7 @@ class BO():
             x = np.random.uniform(self.bounds.lb,
                                   self.bounds.ub,
                                   (init_pts, self.dim))
+            
         else:
             x = x_init.reshape(-1, self.dim)
             init_pts = len(x)
@@ -157,9 +231,11 @@ class BO():
                                                normalize_y = True,
                                                n_restarts_optimizer = 20)
         model_sbo.fit(x, y)
-        LCBgp = LCB_AF(model_sbo, self.dim, self.exp_w, self.descale).LCB
+        
+        LCBgp = LCB_AF(model_sbo, self.dim, self.exp_w, self.descale)
         
         end = time.time()
+        
         for i in range(init_pts):
             self.time_sbo[i] = (i+1)*(end-start)/init_pts
             self.time_fsbo[i] = (i+1)*(end_f-start_f)/init_pts
@@ -170,12 +246,24 @@ class BO():
         for i in range(self.trials_sbo-init_pts):
             x0 = np.random.uniform(self.bounds.lb,
                                    self.bounds.ub,
-                                   (128, self.dim))
-            opt = Parallel(n_jobs = af_cores)(delayed(minimize)(LCBgp,
-                                                                x_0,
-                                                                method = 'L-BFGS-B',
-                                                                bounds = self.bounds)
-                                              for x_0 in x0)
+                                   (af_restarts, self.dim))
+            
+            if af_solver == 'IPOPT':
+                opt = Parallel(n_jobs = af_cores)(delayed(minimize_ipopt)(LCBgp.fun,
+                                                                          x0 = x_0,
+                                                                          jac = LCBgp.grad,
+                                                                          hess = LCBgp.hess,
+                                                                          bounds = self.bounds,
+                                                                          options = af_solver_options)
+                                                  for x_0 in x0)
+                
+            else:
+                opt = Parallel(n_jobs = af_cores)(delayed(minimize)(LCBgp.fun,
+                                                                    x0 = x_0,
+                                                                    method = af_solver,
+                                                                    bounds = self.bounds)
+                                                  for x_0 in x0)
+            
             x_nxts = np.array([res.x for res in opt], dtype  = 'float')
             funs = np.array([np.atleast_1d(res.fun)[0] for res in opt])
             x_nxt = x_nxts[np.argmin(funs)].reshape(1, self.dim)
@@ -200,7 +288,11 @@ class BO():
         self.y_sbo = y
         
         
-    def optimizer_refbo(self, trials, af_cores = 1, x_init = None, init_pts = 1):
+    def optimizer_refbo(self, trials,
+                        x_init = None, init_pts = 1,
+                        af_cores = 1, af_restarts = 128,
+                        af_solver = 'L-BFGS-B', af_solver_options = None):
+        
         print('BO with reference model run...')
         start = time.time()
         self.trials_ref = trials
@@ -211,27 +303,27 @@ class BO():
             x = np.random.uniform(self.bounds.lb,
                                   self.bounds.ub,
                                   (init_pts, self.dim))
+            
         else:
             x = x_init.reshape(-1, self.dim)
             init_pts = len(x)
         
         start_f = time.time()
         y = self.system(self.descale(x), *self.args)
-        if str(type(self.refmod))=="<class '__main__.Network'>":
-            eps = y - self.refmod(torch.from_numpy(x).float(), *self.ref_args).data.numpy()
-        else:
-            eps = y - self.refmod(self.descale(x), *self.ref_args)
+        eps = y - self.refmod(self.descale(x), *self.ref_args)
         eps = eps.reshape(-1, 1)
         end_f = time.time()
         
         model_ref = gpr.GaussianProcessRegressor(self.kernel,
                                                  alpha = 1e-6,
                                                  normalize_y = True,
-                                                 n_restarts_optimizer = 10)
+                                                 n_restarts_optimizer = 20)
         model_ref.fit(x, eps)
-        LCBref = LCB_AF(model_ref, self.dim, self.exp_w, self.descale, self.refmod, self.ref_args).LCB
+        
+        LCBref = LCB_AF(model_ref, self.dim, self.exp_w, self.descale, self.refmod, self.ref_args)
         
         end = time.time()
+        
         for i in range(init_pts):
             self.time_ref[i] = (i+1)*(end-start)/init_pts
             self.time_fref[i] = (i+1)*(end_f-start_f)/init_pts
@@ -242,23 +334,32 @@ class BO():
         for i in range(self.trials_ref-init_pts):
             x0 = np.random.uniform(self.bounds.lb,
                                    self.bounds.ub,
-                                   (128, self.dim))
-            opt = Parallel(n_jobs = af_cores)(delayed(minimize)(LCBref,
-                                                                x_0,
-                                                                method = 'L-BFGS-B',
-                                                                tol = 1e-6,
-                                                                bounds = self.bounds)
-                                              for x_0 in x0)
+                                   (af_restarts, self.dim))
+            
+            if af_solver == 'IPOPT':
+                opt = Parallel(n_jobs = af_cores)(delayed(minimize_ipopt)(LCBref.fun,
+                                                                          x0 = x_0,
+                                                                          jac = LCBref.grad,
+                                                                          hess = LCBref.hess,
+                                                                          bounds = self.bounds,
+                                                                          options = af_solver_options)
+                                                  for x_0 in x0)
+                
+            else:
+                opt = Parallel(n_jobs = af_cores)(delayed(minimize)(LCBref.fun,
+                                                                    x0 = x_0,
+                                                                    method = af_solver,
+                                                                    tol = 1e-6,
+                                                                    bounds = self.bounds)
+                                                  for x_0 in x0)
+                
             x_nxts = np.array([res.x for res in opt], dtype  = 'float')
             funs = np.array([np.atleast_1d(res.fun)[0] for res in opt])
             x_nxt = x_nxts[np.argmin(funs)].reshape(1, self.dim)
             
             start_f = time.time()
             y_nxt = self.system(self.descale(x_nxt), *self.args)
-            if str(type(self.refmod))=="<class '__main__.Network'>":
-                eps_nxt = y_nxt - self.refmod(torch.from_numpy(x_nxt).float(), *self.ref_args).data.numpy()
-            else:
-                eps_nxt = y_nxt - self.refmod(self.descale(x_nxt), *self.ref_args)
+            eps_nxt = y_nxt - self.refmod(self.descale(x_nxt), *self.ref_args)
             eps_nxt = eps_nxt.reshape(-1, 1)
             end_f = time.time()
             self.time_fref[i+init_pts] = self.time_fref[i+init_pts-1]+(end_f-start_f)
@@ -281,8 +382,11 @@ class BO():
         self.eps = eps
     
     
-    def optimizer_lsbo(self, trials, partition_number, repartition_intervals, x_samps,
-                         f_cores = 1, af_cores = 1, ref_cores = 1, partitions = None, x_init = None):
+    def optimizer_lsbo(self, trials, partition_number,
+                       x_init = None, partitions = None,
+                       repartition_intervals = [], x_samps = [],
+                       f_cores = 1, ref_cores = 1, af_cores = 1, af_restarts = 128,
+                       af_solver = 'SLSQP', af_solver_options = None):
         
         """
         > partition_number is the number of desired partitions
@@ -300,7 +404,7 @@ class BO():
           each entry containing a list of the constraints (linear or nonlinear)
           required to set up the desired space partition
           
-        > if reference model is not available, make them functions that return 0
+        > if reference model is not available, make it a function that returns 0
          
         > x_init is an array containing the intial points at which to sample
         """
@@ -317,17 +421,26 @@ class BO():
         def intpts(x, i):
             l = str(i+1)
             res = 0
-            for j in self.cons_ref[l]:
-                if j.lb < j.fun(x) < j.ub:
-                    res += 0
+            for cons in self.cons_ref[l]:
+                if type(cons) == dict:
+                    if cons['fun'](x) > 0:
+                        res += 0
+                    else:
+                        res += 1e6
+                        
                 else:
-                    res += 1e6
+                    if cons.lb < cons.fun(x) < cons.ub:
+                        res += 0
+                    else:
+                        res += 1e6
+                        
             return res
                 
         model_ls = gpr.GaussianProcessRegressor(self.kernel,
                                                 alpha = 1e-6,
                                                 n_restarts_optimizer = 10,
-                                                normalize_y = True)        
+                                                normalize_y = True) 
+        
         cons_fun = lambda x: self.refmod(self.descale(x), *self.ref_args)+model_ls.predict(x.reshape(1, 2))
         
         if self.cons_ref is None:
@@ -335,6 +448,7 @@ class BO():
             y_samps = self.refmod(x_samps, *self.ref_args)
             delta = np.linspace(np.min(y_samps), np.max(y_samps), splits+1)
             self.cons_ref['1'] = [NonlinearConstraint(cons_fun, -np.inf, delta[1])]
+            
             for i in range(1, splits):
                 self.cons_ref[str(i+1)] = [NonlinearConstraint(cons_fun, delta[i], delta[i+1])]
         
@@ -343,18 +457,27 @@ class BO():
         
         for i in range(splits):
             n = 0
+            
             if x_init is not None and switch == True:
-                for j in range(len(self.cons_ref[str(i+1)])):    
-                    if self.cons_ref[str(i+1)][j].fun(x_init) < self.cons_ref[str(i+1)][j].ub\
-                        and self.cons_ref[str(i+1)][j].fun(x_init) > self.cons_ref[str(i+1)][j].lb:
+                for j in range(len(self.cons_ref[str(i+1)])):
+                    if type(self.cons_ref[str(i+1)][j]) == dict:
+                        if self.cons_ref[str(i+1)][j]['fun'](x_init) > 0:
                             n += 1
+                    
+                    else:
+                        if self.cons_ref[str(i+1)][j].fun(x_init) < self.cons_ref[str(i+1)][j].ub\
+                            and self.cons_ref[str(i+1)][j].fun(x_init) > self.cons_ref[str(i+1)][j].lb:
+                                n += 1
+                            
                 if n == len(self.cons_ref[str(i+1)]):
                     x0 = x_init.reshape(1, self.dim)
                     switch = False
+                    
             if n != len(self.cons_ref[str(i+1)]):
                 x0 = np.random.uniform(self.bounds.lb,
                                        self.bounds.ub,
                                        (10, self.dim))
+                
                 opt = Parallel(n_jobs = 1)(delayed(minimize)(intpts,
                                                              x_0,
                                                              args = (i,),
@@ -363,9 +486,11 @@ class BO():
                                                              tol = 1e-6,
                                                              constraints = self.cons_ref[str(i+1)])
                                            for x_0 in x0)
+                
                 x0s = np.array([res.x for res in opt], dtype = 'float')
                 funs = np.array([np.atleast_1d(res.fun)[0] for res in opt])
                 x0 = x0s[np.argmin(funs)]
+                
             x = np.vstack([x, x0.reshape(1, self.dim)])
         
         init_pts = int(len(x)/splits)
@@ -374,37 +499,34 @@ class BO():
         
         if f_cores == 1:
             x_bs[0] = x
+            
         else:
             for i in range(f_cores-1):
                 x_bs[i] = x[i*splt:(i+1)*splt, :]
+                
             x_bs[-1] = x[(i+1)*splt:, :]
         
         start_f = time.time()
         y = Parallel(n_jobs = f_cores)(delayed(self.system)(self.descale(x_s), *self.args)
                                        for x_s in x_bs)
-        if str(type(self.refmod))=="<class '__main__.Network'>":
-            y_ref = Parallel(n_jobs = ref_cores)(delayed(self.refmod)(x_s, *self.ref_args)
-                                                for x_s in torch.from_numpy(x).float())
-            y_ref = torch.hstack(y_ref[:]).T.reshape(-1, 1).data.numpy()
-            end_f = time.time()
-        else:
-            y_ref = Parallel(n_jobs = ref_cores)(delayed(self.refmod)(self.descale(x_s), *self.ref_args)
-                                                 for x_s in x_bs)
-            y_ref = np.hstack(y_ref[:]).T.reshape(-1,1)
-            end_f = time.time()
+        y_ref = Parallel(n_jobs = ref_cores)(delayed(self.refmod)(self.descale(x_s), *self.ref_args)
+                                             for x_s in x_bs)
+        end_f = time.time()
         
         y = np.hstack(y[:]).T.reshape(-1,1)
+        y_ref = np.hstack(y_ref[:]).T.reshape(-1,1)
         eps = y-y_ref
         y_bst = min(y).reshape(-1,1)
         
         model_ls.fit(x, eps)
-        LCB = LCB_AF(model_ls, self.dim, self.exp_w, self.descale, self.refmod, self.ref_args).LCB
+        LCB = LCB_AF(model_ls, self.dim, self.exp_w, self.descale, self.refmod, self.ref_args)
         
-        restarts = max(1, int(round(128/splits, 0)))
+        restarts = max(1, af_restarts//splits)
         x_nxt = np.ones((splits, self.dim))
         x_nxtbs = np.array(np.ones(f_cores), dtype = tuple)
         
         end = time.time()
+        
         for i in range(init_pts):
             self.time_ls[i] = (i+1)*(end-start)/init_pts
             self.time_fls[i] = (i+1)*(end_f-start_f)/init_pts
@@ -420,13 +542,25 @@ class BO():
                                    (restarts, self.dim))
             
             for j in range(splits):
-                opt = Parallel(n_jobs = af_cores)(delayed(minimize)(LCB,
-                                                                    x_0,
-                                                                    method = 'SLSQP',
-                                                                    bounds = self.bounds,
-                                                                    tol = 1e-6,
-                                                                    constraints = self.cons_ref[str(j+1)])
-                                                  for x_0 in x0)
+                if af_solver == 'IPOPT':
+                    opt = Parallel(n_jobs = af_cores)(delayed(minimize_ipopt)(LCB.fun,
+                                                                              x0 = x_0,
+                                                                              jac = LCB.grad,
+                                                                              hess = LCB.hess,
+                                                                              bounds = self.bounds,
+                                                                              constraints = self.cons_ref[str(j+1)],
+                                                                              options = af_solver_options)
+                                                      for x_0 in x0)
+                    
+                else:
+                    opt = Parallel(n_jobs = af_cores)(delayed(minimize)(LCB.fun,
+                                                                        x0 = x_0,
+                                                                        method = 'SLSQP',
+                                                                        bounds = self.bounds,
+                                                                        tol = 1e-6,
+                                                                        constraints = self.cons_ref[str(j+1)])
+                                                      for x_0 in x0)
+                    
                 x_nxts = np.array([res.x for res in opt], dtype = 'float')
                 funs = np.array([np.atleast_1d(res.fun)[0] for res in opt])
                 sts = np.array([res.success for res in opt])
@@ -435,29 +569,25 @@ class BO():
             
             if f_cores == 1:
                 x_nxtbs[0] = x_nxt
+                
             else:
                 for j in range(f_cores-1):
                     x_nxtbs[j] = x_nxt[j*splt:(j+1)*splt, :]
+                    
                 x_nxtbs[-1] = x_nxt[(j+1)*splt:, :]
             
             start_f = time.time()
             y_nxt =  Parallel(n_jobs = f_cores)(delayed(self.system) (self.descale(x_s), *self.args)
                                                 for x_s in x_nxtbs)
-            if str(type(self.refmod)) == "<class '__main__.Network'>":
-                y_ref = Parallel(n_jobs = ref_cores)(delayed(self.refmod)(x_s, *self.ref_args)
-                                                     for x_s in torch.from_numpy(x_nxt).float())
-                end_f = time.time()
-                y_ref = torch.hstack(y_ref[:]).T.reshape(-1, 1).data.numpy()
-            else:
-                y_ref =  Parallel(n_jobs = ref_cores)(delayed(self.refmod)(self.descale(x_s), *self.ref_args)
-                                                      for x_s in x_nxtbs)
-                end_f = time.time()
-                y_ref = np.hstack(y_ref[:]).T.reshape(-1, 1)
+            y_ref =  Parallel(n_jobs = ref_cores)(delayed(self.refmod)(self.descale(x_s), *self.ref_args)
+                                                  for x_s in x_nxtbs)
+            end_f = time.time()
             self.time_fls[i+init_pts] = self.time_fls[i+init_pts-1]+(end_f-start_f)
             
             x = np.vstack([x, x_nxt])
             y_nxt = np.hstack(y_nxt[:]).T.reshape(-1, 1)
             y = np.vstack([y, y_nxt])
+            y_ref = np.hstack(y_ref[:]).T.reshape(-1, 1)
             eps_nxt = y_nxt-y_ref
             eps = np.vstack([eps, eps_nxt])
             y_bst = np.vstack([y_bst, min(y_nxt).reshape(-1, 1)])
@@ -467,12 +597,14 @@ class BO():
                 J+=1
                 y_samps = self.refmod(x_samps, *self.ref_args)+model_ls.predict(self.scale(x_samps))
                 med = np.median(y_samps)
+                
                 for j in range(J):
                     idx = np.where(y_samps <= med)
                     y_samps = y_samps[idx]
                     med = np.median(y_samps)
                 delta = np.linspace(np.min(y_samps), np.max(y_samps), splits+1)
                 self.cons_ref['1'] = [NonlinearConstraint(cons_fun, -np.inf, delta[1])]
+                
                 for j in range(1, splits):
                     self.cons_ref[str(j+1)] = [NonlinearConstraint(cons_fun, delta[j], delta[j+1])]
 
