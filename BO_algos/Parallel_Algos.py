@@ -544,8 +544,7 @@ class BO():
                                    (restarts, self.dim))
             
             for j in range(splits):
-                if af_solver == 'IPOPT':
-                    
+                if af_solver == 'IPOPT': 
                     if af_solver_options and af_solver_options.get('hessian_approximation') == 'exact':
                         lcb_hess = LCB.hess
                         
