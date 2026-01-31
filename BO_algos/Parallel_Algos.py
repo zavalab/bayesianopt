@@ -447,6 +447,7 @@ class BO():
             self.cons_ref = {}
             y_samps = self.refmod(x_samps, *self.ref_args)
             delta = np.linspace(np.min(y_samps), np.max(y_samps), splits+1)
+            
             self.cons_ref['1'] = [NonlinearConstraint(cons_fun, -np.inf, delta[1])]
             
             for i in range(1, splits):
@@ -459,14 +460,13 @@ class BO():
             n = 0
             
             if x_init is not None and switch == True:
-                for j in range(len(self.cons_ref[str(i+1)])):
-                    if type(self.cons_ref[str(i+1)][j]) == dict:
-                        if self.cons_ref[str(i+1)][j]['fun'](x_init) > 0:
+                for cons in self.cons_ref[str(i+1)]:
+                    if type(cons) == dict:
+                        if cons['fun'](x_init) > 0:
                             n += 1
                     
                     else:
-                        if self.cons_ref[str(i+1)][j].fun(x_init) < self.cons_ref[str(i+1)][j].ub\
-                            and self.cons_ref[str(i+1)][j].fun(x_init) > self.cons_ref[str(i+1)][j].lb:
+                        if cons.fun(x_init) < cons.ub and cons.fun(x_init) > cons.lb:
                                 n += 1
                             
                 if n == len(self.cons_ref[str(i+1)]):
@@ -519,7 +519,9 @@ class BO():
         y_bst = min(y).reshape(-1,1)
         
         model_ls.fit(x, eps)
+        
         LCB = LCB_AF(model_ls, self.dim, self.exp_w, self.descale, self.refmod, self.ref_args)
+            
         
         restarts = max(1, af_restarts//splits)
         x_nxt = np.ones((splits, self.dim))
@@ -543,10 +545,17 @@ class BO():
             
             for j in range(splits):
                 if af_solver == 'IPOPT':
+                    
+                    if af_solver_options and af_solver_options.get('hessian_approximation') == 'exact':
+                        lcb_hess = LCB.hess
+                        
+                    else: 
+                        lcb_hess = None
+                    
                     opt = Parallel(n_jobs = af_cores)(delayed(minimize_ipopt)(LCB.fun,
                                                                               x0 = x_0,
                                                                               jac = LCB.grad,
-                                                                              hess = LCB.hess,
+                                                                              hess = lcb_hess,
                                                                               bounds = self.bounds,
                                                                               constraints = self.cons_ref[str(j+1)],
                                                                               options = af_solver_options)
